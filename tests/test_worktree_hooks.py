@@ -1,11 +1,12 @@
 """Verify the worktree adapters forward literal Claude Code hook payloads to rql."""
 import json
+import re
 from pathlib import Path
 import tempfile
 import time
 import unittest
 
-from hook_support import Cases, IMPLEMENTATIONS, argv, context_of, hook_env, install_fake, run, same_path
+from hook_support import ROOT, Cases, IMPLEMENTATIONS, argv, context_of, hook_env, install_fake, run, same_path
 
 FAKE_RQL = '''
 import json, os, sys
@@ -159,6 +160,122 @@ class WorktreeHooksTests(Cases, unittest.TestCase):
             with self.case(implementation=implementation):
                 self.run_hook(implementation, 'worktree-check-hook', payload)
                 self.assertEqual(self.calls(), [])
+
+    def bash_payload(self, event, command, **extra):
+        return {'hook_event_name': event, 'session_id': 'wt-session', 'cwd': str(self.project),
+                'tool_name': 'Bash', 'tool_input': {'command': command, 'description': 'run it'}, **extra}
+
+    def search_payload(self, tool, **tool_input):
+        return {'hook_event_name': 'PostToolUse', 'session_id': 'wt-session', 'agent_id': 'agent-7',
+                'cwd': str(self.project), 'tool_name': tool, 'tool_input': tool_input, 'tool_response': {}}
+
+    def test_read_is_tracked_by_its_file_path(self):
+        config = json.loads((ROOT / 'plugins/repoql/hooks/hooks.json').read_text(encoding='utf-8'))
+        matchers = [group['matcher'] for group in config['hooks']['PostToolUse']
+                    if 'worktree-track-hook' in group['hooks'][0]['command']]
+        self.assertEqual(matchers, ['^(Write|Edit|MultiEdit|NotebookEdit|Read)$'])
+        target = str(self.worktree / 'src/A.cs')
+        payload = self.edit_payload(file_path=target)
+        payload['tool_name'] = 'Read'
+        for implementation in self.each():
+            with self.case(implementation=implementation):
+                self.run_hook(implementation, 'worktree-track-hook', payload)
+                self.assertEqual(self.calls(expected=1)[0]['args'], ['worktree', 'track', target, '--session', 'wt-session'])
+
+    def test_worktree_add_is_announced_before_it_runs_and_prints_nothing(self):
+        command = 'cd "$repo" && git worktree add "$dest" -b feat/x origin/main\necho done'
+        payload = self.bash_payload('PreToolUse', command, agent_id='agent-7')
+        for implementation in self.each():
+            with self.case(implementation=implementation):
+                result = self.run_hook(implementation, 'worktree-before-command-hook', payload)
+                self.assertEqual(result.stdout, '')
+                call, = self.calls()
+                self.assertEqual(call['args'], ['worktree', 'check', '--before-command', command,
+                                                '--session', 'wt-session', '--agent', 'agent-7'])
+                self.assert_reads_from_the_project(call)
+
+    def test_other_bash_commands_start_no_rql_before_they_run(self):
+        for implementation in self.each():
+            with self.case(implementation=implementation):
+                self.run_hook(implementation, 'worktree-before-command-hook', self.bash_payload('PreToolUse', 'git worktree list'))
+                self.assertEqual(self.calls(), [])
+
+    def test_failed_before_command_never_blocks(self):
+        self.env['HOOK_MODE'] = 'failure'
+        for implementation in self.each():
+            with self.case(implementation=implementation):
+                result = self.run_hook(implementation, 'worktree-before-command-hook',
+                                       self.bash_payload('PreToolUse', 'git worktree add ../x'))
+                self.assertEqual(result.stdout, '')
+
+    def test_bash_command_is_forwarded_with_cwd_then_returns_notice(self):
+        command = "cd '%s' && grep -rn \"MountStore\" src | head\tx" % self.worktree
+        payload = self.bash_payload('PostToolUse', command, tool_response={'stdout': 'src/A.cs:1:x', 'stderr': ''})
+        for implementation in self.each():
+            with self.case(implementation=implementation):
+                result = self.run_hook(implementation, 'worktree-command-hook', payload)
+                self.assertEqual(context_of(result, 'PostToolUse'), 'RepoQL worktree notice: this result covers src/A.cs.')
+                call, = self.calls()
+                self.assertEqual(call['args'], ['worktree', 'check', '--command', command, '--session', 'wt-session',
+                                                '--cwd', str(self.project)])
+                self.assertEqual(call['stdin'], '')
+                self.assert_reads_from_the_project(call)
+
+    def test_grep_is_forwarded_as_the_shell_search_it_equals(self):
+        payload = self.search_payload('Grep', pattern="it's (a|b)", path=str(self.worktree), **{'-i': True})
+        quoted = "'it'\\''s (a|b)'"
+        for implementation in self.each():
+            with self.case(implementation=implementation):
+                self.run_hook(implementation, 'worktree-command-hook', payload)
+                self.assertEqual(self.calls()[0]['args'][:4], ['worktree', 'check', '--command',
+                                                              f"grep -rn -i -e {quoted} {self.shell_path()}"])
+                self.assertEqual(self.calls()[0]['args'][4:], ['--session', 'wt-session', '--agent', 'agent-7',
+                                                               '--cwd', str(self.project)])
+
+    def test_grep_without_a_path_searches_the_session_directory(self):
+        payload = self.search_payload('Grep', pattern='MountStore')
+        payload['cwd'] = str(self.worktree)
+        for implementation in self.each():
+            with self.case(implementation=implementation):
+                self.run_hook(implementation, 'worktree-command-hook', payload)
+                self.assertEqual(self.calls()[0]['args'][3], f'grep -rn -e MountStore {self.shell_path()}')
+
+    def test_glob_is_forwarded_as_find(self):
+        payload = self.search_payload('Glob', pattern='**/*.cs', path=str(self.worktree))
+        for implementation in self.each():
+            with self.case(implementation=implementation):
+                self.run_hook(implementation, 'worktree-command-hook', payload)
+                self.assertEqual(self.calls()[0]['args'][3], f"find {self.shell_path()} -name '**/*.cs'")
+
+    def test_silent_or_failed_command_check_emits_nothing(self):
+        for mode in ('silent', 'failure'):
+            self.env['HOOK_MODE'] = mode
+            for implementation in self.each():
+                with self.case(implementation=implementation, mode=mode):
+                    result = self.run_hook(implementation, 'worktree-command-hook', self.bash_payload('PostToolUse', 'ls'))
+                    self.assertEqual(result.stdout, '')
+
+    def test_subagent_start_forwards_ids_and_replies_for_subagent_start(self):
+        payload = {'hook_event_name': 'SubagentStart', 'session_id': 'wt-session', 'agent_id': 'agent-7',
+                   'agent_type': 'general-purpose', 'cwd': str(self.project), 'transcript_path': '/t.jsonl'}
+        for implementation in self.each():
+            with self.case(implementation=implementation):
+                result = self.run_hook(implementation, 'worktree-subagent-hook', payload)
+                self.assertEqual(context_of(result, 'SubagentStart'), 'RepoQL worktree notice: this result covers src/A.cs.')
+                call, = self.calls()
+                self.assertEqual(call['args'], ['worktree', 'check', '--subagent', '--session', 'wt-session', '--agent', 'agent-7'])
+                self.assert_reads_from_the_project(call)
+
+    def test_subagent_start_without_agent_id_omits_it(self):
+        for implementation in self.each():
+            with self.case(implementation=implementation):
+                self.run_hook(implementation, 'worktree-subagent-hook', {'session_id': 'wt-session'})
+                self.assertEqual(self.calls()[0]['args'], ['worktree', 'check', '--subagent', '--session', 'wt-session'])
+
+    def shell_path(self):
+        # The scratch worktree path is plain on macOS and Linux; quote it as the hooks do otherwise.
+        path = str(self.worktree)
+        return path if re.fullmatch(r'[A-Za-z0-9_./:=@%+,-]+', path) else "'" + path.replace("'", "'\\''") + "'"
 
 
 if __name__ == '__main__':

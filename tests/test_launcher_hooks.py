@@ -65,11 +65,18 @@ class LauncherFixture(unittest.TestCase):
             'vocabulary-read-hook': {**base, **read},
             'worktree-check-hook': {**base, **read},
             'worktree-track-hook': {**base, 'tool_name': 'Edit', 'tool_input': {'file_path': str(self.workspace / 'a.cs')}},
+            'worktree-before-command-hook': {**base, 'tool_name': 'Bash', 'tool_input': {'command': 'git worktree add ../x'}},
+            'worktree-command-hook': {**base, 'tool_name': 'Bash', 'tool_input': {'command': 'grep -rn x src'}},
+            'worktree-subagent-hook': {**base, 'agent_id': 'agent-1', 'agent_type': 'general-purpose'},
         }
         self.expected = {'session-start': ('SessionStart', '# RepoQL: Repository Orientation'),
                          'concepts-write-hook': ('PreToolUse', 'concept:///Rule.md\tPreserve the contract.'),
                          'vocabulary-read-hook': ('PostToolUse', 'DirtySweep [engine]'),
-                         'worktree-check-hook': ('PostToolUse', 'RepoQL worktree notice.')}
+                         'worktree-check-hook': ('PostToolUse', 'RepoQL worktree notice.'),
+                         'worktree-command-hook': ('PostToolUse', 'RepoQL worktree notice.'),
+                         'worktree-subagent-hook': ('SubagentStart', 'RepoQL worktree notice.')}
+        # The hooks that answer nothing, and the rql call each makes instead.
+        self.silent = {'worktree-track-hook': 'track', 'worktree-before-command-hook': '--before-command'}
 
     def hooks(self, key):
         config = json.loads((PLUGINS / self.harness / 'hooks' / 'hooks.json').read_text())
@@ -91,11 +98,12 @@ class LauncherFixture(unittest.TestCase):
                 event, text = self.expected[name]
                 self.assertIn(text, context_of(result, event))
             else:
-                # Tracking answers nothing; the bash hook makes its call detached.
+                # These answer nothing; the bash tracking hook makes its call detached.
+                self.assertEqual(result.stdout, '')
                 deadline = time.monotonic() + 3
                 while not self.log.exists() and time.monotonic() < deadline:
                     time.sleep(0.05)
-                self.assertIn('track', self.log.read_text())
+                self.assertIn(self.silent[name], self.log.read_text())
 
 
 class ClaudeCodeLauncherTests(LauncherFixture):
