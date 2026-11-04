@@ -1,5 +1,6 @@
 # After a Bash, Grep or Glob call, tell the agent the RepoQL address of a git worktree the call created or searched.
-# rql reads the command and decides everything; this adapter forwards it, writing a Grep or Glob call as the shell search it equals.
+# rql reads the command and decides everything; this adapter forwards it, writing a Grep call as the ripgrep search it runs
+# and a Glob call as a find -path search, a deliberate stand-in rql declines to translate, so the agent gets the notice without a call.
 # worktree-command-hook.sh is the same hook for bash.
 . (Join-Path $PSScriptRoot 'hook-io.ps1')
 
@@ -18,9 +19,12 @@ try {
     $reading = $env:CLAUDE_PROJECT_DIR
     if (-not $session -or -not (Test-Directory $reading) -or -not (Get-Command rql)) { exit 0 }
 
-    # A Grep call is the ripgrep search it runs, with the fields that decide which
-    # lines match; output_mode, -n, -A, -B, -C and head_limit change only what is
-    # printed. A Glob call is a find over whole paths, which rql leaves untranslated.
+    # A Grep call is the ripgrep search it runs: the fields that decide which lines
+    # match, and the output mode and context lines that decide what it prints, since
+    # rql translates a search only when its call returns every printed line.
+    # head_limit is a result limit and the -n field only presentation, so both are
+    # left out; a content search always numbers its lines.
+    # A Glob call is a find over whole paths, which rql leaves untranslated.
     # Both search their path, or the session's directory without one.
     $toolInput = $payload.tool_input
     $tool = [string]$payload.tool_name
@@ -33,7 +37,18 @@ try {
         if ($path -isnot [string] -or -not $path) { $path = $workspace }
         if ($pattern -isnot [string] -or -not $pattern -or $path -isnot [string] -or -not $path) { exit 0 }
         if ($tool -ceq 'Grep') {
-            $command = 'rg -n'
+            $mode = $toolInput.output_mode
+            if ($mode -ceq 'content') {
+                $command = 'rg -n'
+                foreach ($flag in '-A', '-B', '-C') {
+                    $lines = $toolInput.$flag
+                    if ($null -ne $lines -and [string]$lines -cmatch '\A[0-9]+\z') { $command += " $flag $lines" }
+                }
+            } elseif ($mode -ceq 'count') {
+                $command = 'rg -c'
+            } else {
+                $command = 'rg -l'
+            }
             if ($toolInput.'-i' -eq $true) { $command += ' -i' }
             $glob = $toolInput.glob
             if ($glob -is [string] -and $glob) { $command += ' -g ' + (ConvertTo-ShellWord $glob) }

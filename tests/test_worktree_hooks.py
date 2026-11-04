@@ -233,8 +233,7 @@ class WorktreeHooksTests(Cases, unittest.TestCase):
     def test_grep_is_forwarded_as_the_ripgrep_search_it_runs(self):
         # Claude Code's Grep tool is ripgrep: every field that decides which lines match is forwarded.
         payload = self.search_payload('Grep', pattern='alpha\\|beta', path=str(self.worktree), glob='*.cs', type='cs',
-                                      multiline=True, output_mode='content', head_limit=5, **{'-i': True, '-n': True,
-                                      '-A': 2, '-B': 3, '-C': 4})
+                                      multiline=True, head_limit=5, **{'-i': True, '-n': True})
         for implementation in self.each():
             with self.case(implementation=implementation):
                 args, words = self.forwarded_search(implementation, payload)
@@ -247,8 +246,28 @@ class WorktreeHooksTests(Cases, unittest.TestCase):
                 self.assertIn('-U', words)
                 self.assertIn('--multiline-dotall', words)
                 self.assertEqual(words[-2:], ['--', str(self.worktree)])
-                for printed_only in ('-A', '-B', '-C', '--max-count', 'content', '5'):
-                    self.assertNotIn(printed_only, words)
+                # head_limit is a result limit and -n only presentation.
+                for left_out in ('-n', '--max-count', '-m', '5'):
+                    self.assertNotIn(left_out, words)
+
+    def test_grep_forwards_what_its_output_mode_prints(self):
+        # rql translates a search only when its call returns every line the search printed,
+        # so the output mode and the context lines reach it as the ripgrep flags that print them.
+        cases = [
+            ({}, ['-l']),
+            ({'output_mode': 'files_with_matches', '-A': 2}, ['-l']),
+            ({'output_mode': 'count', '-C': 2}, ['-c']),
+            ({'output_mode': 'content'}, ['-n']),
+            ({'output_mode': 'content', '-A': 1, '-B': 1}, ['-n', '-A', '1', '-B', '1']),
+            ({'output_mode': 'content', '-C': 3, '-n': False, 'head_limit': 2}, ['-n', '-C', '3']),
+            ({'output_mode': 'content', '-A': 0, '-B': 12, '-C': 4}, ['-n', '-A', '0', '-B', '12', '-C', '4']),
+        ]
+        for fields, flags in cases:
+            payload = self.search_payload('Grep', pattern='Needle', path=str(self.worktree), **fields)
+            for implementation in self.each():
+                with self.case(implementation=implementation, fields=fields):
+                    _, words = self.forwarded_search(implementation, payload)
+                    self.assertEqual(words, ['rg', *flags, '-e', 'Needle', '--', str(self.worktree)])
 
     def test_grep_preserves_the_pattern_byte_for_byte(self):
         for pattern in ("it's (a|b)", 'alpha\\|beta', 'needle\n', 'a\tb', "'\n\n", '-starts-like-an-option'):
@@ -263,7 +282,7 @@ class WorktreeHooksTests(Cases, unittest.TestCase):
         for implementation in self.each():
             with self.case(implementation=implementation):
                 _, words = self.forwarded_search(implementation, payload)
-                self.assertEqual(words, ['rg', '-n', '-e', 'MountStore', '--', str(self.worktree)])
+                self.assertEqual(words, ['rg', '-l', '-e', 'MountStore', '--', str(self.worktree)])
 
     def test_grep_without_a_path_searches_the_session_directory(self):
         payload = self.search_payload('Grep', pattern='MountStore')
@@ -302,14 +321,18 @@ class WorktreeHooksTests(Cases, unittest.TestCase):
         (fixture / 'A.cs').write_text('alpha|beta\nalpha\nALPHA|BETA\nbeta\n', encoding='utf-8')
         (fixture / 'B.txt').write_text('alpha|beta\n', encoding='utf-8')
         (fixture / 'C.cs').write_text("it's here\nit is not\n", encoding='utf-8')
+        (fixture / 'D.cs').write_text('first\nbefore\nNeedle\nafter\nlast\n', encoding='utf-8')
         cases = [
-            ({'pattern': 'alpha\\|beta', 'glob': '*.cs', '-i': True},
-             ['-i', '-g', '*.cs', '-e', 'alpha\\|beta']),
-            ({'pattern': 'alpha\\|beta'}, ['-e', 'alpha\\|beta']),
-            ({'pattern': "it's", 'type': 'cs'}, ['-t', 'cs', '-e', "it's"]),
+            ({'pattern': 'alpha\\|beta', 'glob': '*.cs', '-i': True, 'output_mode': 'content'},
+             ['-n', '-i', '-g', '*.cs', '-e', 'alpha\\|beta']),
+            ({'pattern': 'alpha\\|beta'}, ['-l', '-e', 'alpha\\|beta']),
+            ({'pattern': "it's", 'type': 'cs', 'output_mode': 'content'}, ['-n', '-t', 'cs', '-e', "it's"]),
+            ({'pattern': 'Needle', 'output_mode': 'content', '-A': 1, '-B': 1},
+             ['-n', '-A', '1', '-B', '1', '-e', 'Needle']),
+            ({'pattern': 'alpha', 'output_mode': 'count', '-i': True}, ['-c', '-i', '-e', 'alpha']),
         ]
         for fields, flags in cases:
-            original = subprocess.run(['rg', '-n', *flags, '--', str(self.worktree)],
+            original = subprocess.run(['rg', *flags, '--', str(self.worktree)],
                                       capture_output=True, text=True).stdout
             self.assertTrue(original, fields)
             for implementation in self.each():
@@ -318,6 +341,9 @@ class WorktreeHooksTests(Cases, unittest.TestCase):
                         'Grep', path=str(self.worktree), **fields))
                     forwarded = subprocess.run(['bash', '-c', args[3]], capture_output=True, text=True).stdout
                     self.assertEqual(sorted(forwarded.splitlines()), sorted(original.splitlines()))
+        context = subprocess.run(['rg', '-n', '-A', '1', '-B', '1', '-e', 'Needle', '--', str(fixture / 'D.cs')],
+                                 capture_output=True, text=True).stdout
+        self.assertEqual(context.splitlines(), ['2-before', '3:Needle', '4-after'])
 
     def test_silent_or_failed_command_check_emits_nothing(self):
         for mode in ('silent', 'failure'):

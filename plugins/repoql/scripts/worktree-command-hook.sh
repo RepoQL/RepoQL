@@ -1,6 +1,7 @@
 #!/bin/bash
 # After a Bash, Grep or Glob call, tell the agent the RepoQL address of a git worktree the call created or searched.
-# rql reads the command and decides everything; this adapter forwards it, writing a Grep or Glob call as the shell search it equals.
+# rql reads the command and decides everything; this adapter forwards it, writing a Grep call as the ripgrep search it runs
+# and a Glob call as a find -path search, a deliberate stand-in rql declines to translate, so the agent gets the notice without a call.
 # worktree-command-hook.ps1 is the same hook for Windows PowerShell.
 set -o pipefail
 trap 'exit 0' ERR
@@ -40,28 +41,48 @@ read_text() {
 session=""
 agent=""
 tool=""
+workspace=""
+command=""
 ignore_case=""
 multiline=""
+output_mode=""
+after=""
+before=""
+around=""
+have_workspace=""
+have_command=""
 while IFS=$'\t' read -r name value; do
     case "$name" in
         session_id) session=$value ;;
         agent_id) agent=$value ;;
+        cwd) workspace=$value; have_workspace=1 ;;
         tool_name) tool=$value ;;
+        tool_input.command) command=$value; have_command=1 ;;
         tool_input.-i) ignore_case=$value ;;
         tool_input.multiline) multiline=$value ;;
+        tool_input.output_mode) output_mode=$value ;;
+        tool_input.-A) after=$value ;;
+        tool_input.-B) before=$value ;;
+        tool_input.-C) around=$value ;;
     esac
-done < <(printf '%s' "$input" | json_leaves '^(session_id|agent_id|tool_name|tool_input[.](-i|multiline))$')
+done < <(printf '%s' "$input" | json_leaves '^(session_id|agent_id|cwd|tool_name|tool_input[.](command|-i|multiline|output_mode|-A|-B|-C))$')
 reading="${CLAUDE_PROJECT_DIR:-}"
 [ -n "$session" ] && [ -d "$reading" ] || exit 0
-read_text workspace cwd
+# json_leaves leaves out a value holding a tab or a newline; only then is the
+# payload scanned again for the whole text.
+[ -n "$have_workspace" ] || read_text workspace cwd
 
-# A Grep call is the ripgrep search it runs, with the fields that decide which
-# lines match; output_mode, -n, -A, -B, -C and head_limit change only what is
-# printed. A Glob call is a find over whole paths, which rql leaves untranslated.
+# A Grep call is the ripgrep search it runs: the fields that decide which lines
+# match, and the output mode and context lines that decide what it prints, since
+# rql translates a search only when its call returns every printed line.
+# head_limit is a result limit and the -n field only presentation, so both are
+# left out; a content search always numbers its lines.
+# A Glob call is a find over whole paths, which rql leaves untranslated.
 # Both search their path, or the session's directory without one.
+lines='^[0-9]+$'
 case "$tool" in
     Bash)
-        read_text command 'tool_input[.]command' ;;
+        [ -n "$have_command" ] || read_text command 'tool_input[.]command' ;;
     Grep|Glob)
         read_text pattern 'tool_input[.]pattern'
         read_text path 'tool_input[.]path'
@@ -70,7 +91,15 @@ case "$tool" in
         if [ "$tool" = Grep ]; then
             read_text glob 'tool_input[.]glob'
             read_text type 'tool_input[.]type'
-            command="rg -n"
+            case "$output_mode" in
+                content)
+                    command="rg -n"
+                    [[ $after =~ $lines ]] && command+=" -A $after"
+                    [[ $before =~ $lines ]] && command+=" -B $before"
+                    [[ $around =~ $lines ]] && command+=" -C $around" ;;
+                count) command="rg -c" ;;
+                *) command="rg -l" ;;
+            esac
             [ "$ignore_case" = true ] && command+=" -i"
             [ -n "$glob" ] && command+=" -g $(shell_word "$glob")"
             [ -n "$type" ] && command+=" -t $(shell_word "$type")"
