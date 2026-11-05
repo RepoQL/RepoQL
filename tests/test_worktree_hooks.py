@@ -1,14 +1,11 @@
 """Verify the worktree adapters forward literal Claude Code hook payloads to rql."""
 import json
 from pathlib import Path
-import shlex
-import shutil
-import subprocess
 import tempfile
 import time
 import unittest
 
-from hook_support import ROOT, Cases, IMPLEMENTATIONS, argv, context_of, hook_env, install_fake, run, same_path
+from hook_support import Cases, IMPLEMENTATIONS, argv, context_of, hook_env, install_fake, run, same_path
 
 FAKE_RQL = '''
 import json, os, sys
@@ -167,23 +164,6 @@ class WorktreeHooksTests(Cases, unittest.TestCase):
         return {'hook_event_name': event, 'session_id': 'wt-session', 'cwd': str(self.project),
                 'tool_name': 'Bash', 'tool_input': {'command': command, 'description': 'run it'}, **extra}
 
-    def search_payload(self, tool, **tool_input):
-        return {'hook_event_name': 'PostToolUse', 'session_id': 'wt-session', 'agent_id': 'agent-7',
-                'cwd': str(self.project), 'tool_name': tool, 'tool_input': tool_input, 'tool_response': {}}
-
-    def test_read_is_tracked_by_its_file_path(self):
-        config = json.loads((ROOT / 'plugins/repoql/hooks/hooks.json').read_text(encoding='utf-8'))
-        matchers = [group['matcher'] for group in config['hooks']['PostToolUse']
-                    if 'worktree-track-hook' in group['hooks'][0]['command']]
-        self.assertEqual(matchers, ['^(Write|Edit|MultiEdit|NotebookEdit|Read)$'])
-        target = str(self.worktree / 'src/A.cs')
-        payload = self.edit_payload(file_path=target)
-        payload['tool_name'] = 'Read'
-        for implementation in self.each():
-            with self.case(implementation=implementation):
-                self.run_hook(implementation, 'worktree-track-hook', payload)
-                self.assertEqual(self.calls(expected=1)[0]['args'], ['worktree', 'track', target, '--session', 'wt-session'])
-
     def test_worktree_add_is_announced_before_it_runs_and_prints_nothing(self):
         command = 'cd "$repo" && git worktree add "$dest" -b feat/x origin/main\necho done'
         payload = self.bash_payload('PreToolUse', command, agent_id='agent-7')
@@ -210,147 +190,46 @@ class WorktreeHooksTests(Cases, unittest.TestCase):
                                        self.bash_payload('PreToolUse', 'git worktree add ../x'))
                 self.assertEqual(result.stdout, '')
 
-    def test_bash_command_is_forwarded_with_cwd_then_returns_notice(self):
-        command = "cd '%s' && grep -rn \"MountStore\" src | head\tx" % self.worktree
-        payload = self.bash_payload('PostToolUse', command, tool_response={'stdout': 'src/A.cs:1:x', 'stderr': ''})
+    def test_worktree_add_is_forwarded_with_its_ids_then_returns_notice(self):
+        command = 'git worktree add "$dest" -b feat/x origin/main'
+        payload = self.bash_payload('PostToolUse', command, agent_id='agent-7',
+                                    tool_response={'stdout': 'Preparing worktree', 'stderr': ''})
         for implementation in self.each():
             with self.case(implementation=implementation):
                 result = self.run_hook(implementation, 'worktree-command-hook', payload)
                 self.assertEqual(context_of(result, 'PostToolUse'), 'RepoQL worktree notice: this result covers src/A.cs.')
                 call, = self.calls()
-                self.assertEqual(call['args'], ['worktree', 'check', '--command', command, '--session', 'wt-session',
-                                                '--cwd', str(self.project)])
+                self.assertEqual(call['args'], ['worktree', 'check', '--command', command,
+                                                '--session', 'wt-session', '--agent', 'agent-7'])
                 self.assertEqual(call['stdin'], '')
                 self.assert_reads_from_the_project(call)
 
-    def forwarded_search(self, implementation, payload):
-        """The search a Grep or Glob call was forwarded as, split into words as a POSIX shell would."""
-        self.run_hook(implementation, 'worktree-command-hook', payload)
-        call, = self.calls()
-        self.assertEqual(call['args'][:3], ['worktree', 'check', '--command'])
-        return call['args'], shlex.split(call['args'][3])
-
-    def test_grep_is_forwarded_as_the_ripgrep_search_it_runs(self):
-        # Claude Code's Grep tool is ripgrep: every field that decides which lines match is forwarded.
-        payload = self.search_payload('Grep', pattern='alpha\\|beta', path=str(self.worktree), glob='*.cs', type='cs',
-                                      multiline=True, head_limit=5, **{'-i': True, '-n': True})
-        for implementation in self.each():
-            with self.case(implementation=implementation):
-                args, words = self.forwarded_search(implementation, payload)
-                self.assertEqual(args[4:], ['--session', 'wt-session', '--agent', 'agent-7', '--cwd', str(self.project)])
-                self.assertEqual(words[0], 'rg')
-                self.assertEqual(words[words.index('-e') + 1], 'alpha\\|beta')
-                self.assertEqual(words[words.index('-g') + 1], '*.cs')
-                self.assertEqual(words[words.index('-t') + 1], 'cs')
-                self.assertIn('-i', words)
-                self.assertIn('-U', words)
-                self.assertIn('--multiline-dotall', words)
-                self.assertEqual(words[-2:], ['--', str(self.worktree)])
-                # head_limit is a result limit and -n only presentation.
-                for left_out in ('-n', '--max-count', '-m', '5'):
-                    self.assertNotIn(left_out, words)
-
-    def test_grep_forwards_what_its_output_mode_prints(self):
-        # rql translates a search only when its call returns every line the search printed,
-        # so the output mode and the context lines reach it as the ripgrep flags that print them.
-        cases = [
-            ({}, ['-l']),
-            ({'output_mode': 'files_with_matches', '-A': 2}, ['-l']),
-            ({'output_mode': 'count', '-C': 2}, ['-c']),
-            ({'output_mode': 'content'}, ['-n']),
-            ({'output_mode': 'content', '-A': 1, '-B': 1}, ['-n', '-A', '1', '-B', '1']),
-            ({'output_mode': 'content', '-C': 3, '-n': False, 'head_limit': 2}, ['-n', '-C', '3']),
-            ({'output_mode': 'content', '-A': 0, '-B': 12, '-C': 4}, ['-n', '-A', '0', '-B', '12', '-C', '4']),
-        ]
-        for fields, flags in cases:
-            payload = self.search_payload('Grep', pattern='Needle', path=str(self.worktree), **fields)
+    def test_other_bash_commands_start_no_rql_after_they_run(self):
+        for command in ('git worktree list', "grep -rn MountStore '%s/src'" % self.worktree, 'ls'):
+            payload = self.bash_payload('PostToolUse', command, agent_id='agent-7')
             for implementation in self.each():
-                with self.case(implementation=implementation, fields=fields):
-                    _, words = self.forwarded_search(implementation, payload)
-                    self.assertEqual(words, ['rg', *flags, '-e', 'Needle', '--', str(self.worktree)])
+                with self.case(implementation=implementation, command=command):
+                    result = self.run_hook(implementation, 'worktree-command-hook', payload)
+                    self.assertEqual(result.stdout, '')
+                    self.assertEqual(self.calls(), [])
 
-    def test_grep_preserves_the_pattern_byte_for_byte(self):
-        for pattern in ("it's (a|b)", 'alpha\\|beta', 'needle\n', 'a\tb', "'\n\n", '-starts-like-an-option'):
-            payload = self.search_payload('Grep', pattern=pattern, path=str(self.worktree))
-            for implementation in self.each():
-                with self.case(implementation=implementation, pattern=pattern):
-                    _, words = self.forwarded_search(implementation, payload)
-                    self.assertEqual(words[words.index('-e') + 1], pattern)
-
-    def test_grep_without_options_forwards_none(self):
-        payload = self.search_payload('Grep', pattern='MountStore', path=str(self.worktree), **{'-i': False})
-        for implementation in self.each():
-            with self.case(implementation=implementation):
-                _, words = self.forwarded_search(implementation, payload)
-                self.assertEqual(words, ['rg', '-l', '-e', 'MountStore', '--', str(self.worktree)])
-
-    def test_grep_without_a_path_searches_the_session_directory(self):
-        payload = self.search_payload('Grep', pattern='MountStore')
-        payload['cwd'] = str(self.worktree)
-        for implementation in self.each():
-            with self.case(implementation=implementation):
-                _, words = self.forwarded_search(implementation, payload)
-                self.assertEqual(words[-2:], ['--', str(self.worktree)])
-
-    def test_glob_is_forwarded_as_find_over_whole_paths(self):
-        # find -name matches base names only, so a Glob pattern with a directory in it is written as -path.
-        for pattern in ('**/*.cs', 'src/*.cs', '*.cs'):
-            for path in (str(self.worktree), str(self.worktree) + '/'):
-                payload = self.search_payload('Glob', pattern=pattern, path=path)
+    def test_worktree_add_command_reaches_rql_byte_for_byte(self):
+        for command in ('git worktree add ../x\n', 'git worktree add\t../x', 'cd a\tb && git worktree add ../x\n\n',
+                        "git worktree add 'it''s' \\n"):
+            for hook, option in (('worktree-before-command-hook', '--before-command'), ('worktree-command-hook', '--command')):
+                payload = self.bash_payload('PostToolUse', command)
                 for implementation in self.each():
-                    with self.case(implementation=implementation, pattern=pattern, path=path):
-                        _, words = self.forwarded_search(implementation, payload)
-                        self.assertEqual(words, ['find', path, '-path', f'{self.worktree}/{pattern}'])
-
-    def test_paths_holding_a_tab_or_newline_reach_rql_whole_from_both_shells(self):
-        for suffix in ('\tx', '\nx', 'x\n'):
-            path = str(self.worktree) + suffix
-            for tool, pattern in (('Grep', 'needle'), ('Glob', '*.cs')):
-                payload = self.search_payload(tool, pattern=pattern, path=path)
-                forwarded = {}
-                for implementation in self.each():
-                    with self.case(implementation=implementation, tool=tool, suffix=suffix):
-                        args, words = self.forwarded_search(implementation, payload)
-                        self.assertEqual(words[1] if tool == 'Glob' else words[-1], path)
-                        forwarded[implementation] = args
-                self.assertEqual(len(set(map(tuple, forwarded.values()))), 1, forwarded)
-
-    @unittest.skipUnless(shutil.which('rg') and shutil.which('bash'), 'needs rg and bash')
-    def test_forwarded_grep_prints_what_the_grep_call_finds(self):
-        fixture = self.worktree / 'src'
-        (fixture / 'A.cs').write_text('alpha|beta\nalpha\nALPHA|BETA\nbeta\n', encoding='utf-8')
-        (fixture / 'B.txt').write_text('alpha|beta\n', encoding='utf-8')
-        (fixture / 'C.cs').write_text("it's here\nit is not\n", encoding='utf-8')
-        (fixture / 'D.cs').write_text('first\nbefore\nNeedle\nafter\nlast\n', encoding='utf-8')
-        cases = [
-            ({'pattern': 'alpha\\|beta', 'glob': '*.cs', '-i': True, 'output_mode': 'content'},
-             ['-n', '-i', '-g', '*.cs', '-e', 'alpha\\|beta']),
-            ({'pattern': 'alpha\\|beta'}, ['-l', '-e', 'alpha\\|beta']),
-            ({'pattern': "it's", 'type': 'cs', 'output_mode': 'content'}, ['-n', '-t', 'cs', '-e', "it's"]),
-            ({'pattern': 'Needle', 'output_mode': 'content', '-A': 1, '-B': 1},
-             ['-n', '-A', '1', '-B', '1', '-e', 'Needle']),
-            ({'pattern': 'alpha', 'output_mode': 'count', '-i': True}, ['-c', '-i', '-e', 'alpha']),
-        ]
-        for fields, flags in cases:
-            original = subprocess.run(['rg', *flags, '--', str(self.worktree)],
-                                      capture_output=True, text=True).stdout
-            self.assertTrue(original, fields)
-            for implementation in self.each():
-                with self.case(implementation=implementation, fields=fields):
-                    args, _ = self.forwarded_search(implementation, self.search_payload(
-                        'Grep', path=str(self.worktree), **fields))
-                    forwarded = subprocess.run(['bash', '-c', args[3]], capture_output=True, text=True).stdout
-                    self.assertEqual(sorted(forwarded.splitlines()), sorted(original.splitlines()))
-        context = subprocess.run(['rg', '-n', '-A', '1', '-B', '1', '-e', 'Needle', '--', str(fixture / 'D.cs')],
-                                 capture_output=True, text=True).stdout
-        self.assertEqual(context.splitlines(), ['2-before', '3:Needle', '4-after'])
+                    with self.case(implementation=implementation, hook=hook, command=command):
+                        self.run_hook(implementation, hook, payload)
+                        call, = self.calls()
+                        self.assertEqual(call['args'], ['worktree', 'check', option, command, '--session', 'wt-session'])
 
     def test_silent_or_failed_command_check_emits_nothing(self):
         for mode in ('silent', 'failure'):
             self.env['HOOK_MODE'] = mode
             for implementation in self.each():
                 with self.case(implementation=implementation, mode=mode):
-                    result = self.run_hook(implementation, 'worktree-command-hook', self.bash_payload('PostToolUse', 'ls'))
+                    result = self.run_hook(implementation, 'worktree-command-hook', self.bash_payload('PostToolUse', 'git worktree add ../x'))
                     self.assertEqual(result.stdout, '')
 
     def test_subagent_start_forwards_ids_and_replies_for_subagent_start(self):

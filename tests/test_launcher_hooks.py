@@ -66,7 +66,7 @@ class LauncherFixture(unittest.TestCase):
             'worktree-check-hook': {**base, **read},
             'worktree-track-hook': {**base, 'tool_name': 'Edit', 'tool_input': {'file_path': str(self.workspace / 'a.cs')}},
             'worktree-before-command-hook': {**base, 'tool_name': 'Bash', 'tool_input': {'command': 'git worktree add ../x'}},
-            'worktree-command-hook': {**base, 'tool_name': 'Bash', 'tool_input': {'command': 'grep -rn x src'}},
+            'worktree-command-hook': {**base, 'tool_name': 'Bash', 'tool_input': {'command': 'git worktree add ../y'}},
             'worktree-subagent-hook': {**base, 'agent_id': 'agent-1', 'agent_type': 'general-purpose'},
         }
         self.expected = {'session-start': ('SessionStart', '# RepoQL: Repository Orientation'),
