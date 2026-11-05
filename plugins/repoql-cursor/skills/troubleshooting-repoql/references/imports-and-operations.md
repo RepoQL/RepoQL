@@ -11,13 +11,13 @@ command("import list")
 …or, with more detail, the per-source rollup:
 
 ```sql
-SELECT scheme, authority, source_uri, file_count, indexed_count, embedded_count,
+SELECT scheme, authority, uri, file_count, indexed_count, embedded_count,
        embed_pct, watching, mounted_at
 FROM Filesystems
 ORDER BY mounted_at DESC;
 ```
 
-`Filesystems` aggregates each mount: how many files, how many indexed/embedded, whether it's watched. A mount that's present but `indexed_count = 0` is registered but not yet processed — that's an *operation* question, below. A mount that's entirely **absent** means the import didn't register; re-run `import add --uri …` and watch for an error, and confirm `.repoql/mounts.json` gained an entry.
+`Filesystems` aggregates each mount: how many files, how many indexed/embedded, whether it's watched. A host older than rql 1.7.20 names the `uri` column `source_uri`. A mount that's present but `indexed_count = 0` is registered but not yet processed — that's an *operation* question, below. A mount that's entirely **absent** means the import didn't register; re-run `import add --uri …` and watch for an error, and confirm `.repoql/mounts.json` gained an entry.
 
 ## Track the operation
 

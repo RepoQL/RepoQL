@@ -89,7 +89,7 @@ test('the label is drawn from the monitor child on each surface that has a foote
 
 const UPLINKS = 'Accessible uplinks: fotg-gcp, stu-pc\nPass uplink="name" to a read-only RepoQL tool, or --uplink name to the CLI. Omit it for the local repository.\n'
 // What `rql query` prints over an uplink, byte for byte: a summary line, a tab-separated header, a row per source.
-const SOURCES = '2 rows · [18 tok | 38 ms | ready]\nsource_uri\tfile_count\nfile://\t9830\ngithub://sharkdp/bat\t236\n\n'
+const SOURCES = '2 rows · [18 tok | 38 ms | ready]\nuri\tfile_count\nfile://\t9830\ngithub://sharkdp/bat\t236\n\n'
 const NEVER = 'this instance has never connected; no `rql uplink` has dialled in with its credential yet\n'
 
 /** Answers each command the mod runs as a host with two uplinks would: one holds two sources, one has never connected. */
@@ -156,8 +156,8 @@ test('where SVG is drawn the band is the presence: the eye at rest, an eye for e
   // opening the pane asks the uplinks; the band then marks each, lit while it answers
   expect(ran).toEqual([
     ['rql', 'uplinks'],
-    ['rql', 'query', '--uplink', 'fotg-gcp', "SELECT source_uri, file_count FROM Filesystems WHERE scheme <> 'help' AND file_count > 0"],
-    ['rql', 'query', '--uplink', 'stu-pc', "SELECT source_uri, file_count FROM Filesystems WHERE scheme <> 'help' AND file_count > 0"],
+    ['rql', 'query', '--uplink', 'fotg-gcp', "SELECT COLUMNS(c -> c IN ('uri', 'source_uri')) AS uri, file_count FROM Filesystems WHERE scheme <> 'help' AND file_count > 0"],
+    ['rql', 'query', '--uplink', 'stu-pc', "SELECT COLUMNS(c -> c IN ('uri', 'source_uri')) AS uri, file_count FROM Filesystems WHERE scheme <> 'help' AND file_count > 0"],
   ])
   const marked = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'AbovePrompt', props: band(false) })
   expect((await marked.findAll({ type: 'Svg' })).map(each => each.props.alt)).toEqual([

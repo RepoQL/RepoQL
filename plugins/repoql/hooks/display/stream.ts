@@ -15,13 +15,16 @@ export const INITIAL: View = {
   slowTool: null,
 }
 
-/** The query each uplink is asked: its sources, without the help every host carries. */
-export const SOURCES_SQL = "SELECT source_uri, file_count FROM Filesystems WHERE scheme <> 'help' AND file_count > 0"
+/**
+ * The query each uplink is asked: its sources, without the help every host carries. An uplink can run any rql
+ * release, and the address column is uri from 1.7.20 and source_uri before it, so COLUMNS picks whichever it has.
+ */
+export const SOURCES_SQL = "SELECT COLUMNS(c -> c IN ('uri', 'source_uri')) AS uri, file_count FROM Filesystems WHERE scheme <> 'help' AND file_count > 0"
 
 /** The rows of what `rql query` prints for SOURCES_SQL: a summary line, a tab-separated header, then a row per source; null when the header is not there. */
 export function sourcesOf(stdout: string): Source[] | null {
   const lines = stdout.split('\n')
-  const header = lines.findIndex(each => each.trim() === 'source_uri\tfile_count')
+  const header = lines.findIndex(each => each.trim() === 'uri\tfile_count')
 
   if (header < 0) {
     return null

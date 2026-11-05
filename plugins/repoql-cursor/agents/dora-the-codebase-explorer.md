@@ -121,7 +121,7 @@ Combine for surgical precision:
 | `Types` | All type definitions | name, type_kind, extends, implements, namespace, visibility, file_uri |
 | `Functions` | Methods and functions | name, signature, declaring_type, is_async, return_type, parameters |
 | `Annotations` | Diagnostics | resolved_target_uri, severity, source, rule_id, message |
-| `Filesystems` | Data sources | source_uri, file_count, languages, embed_pct |
+| `Filesystems` | Data sources | uri, file_count, languages, embed_pct |
 | `Operations` | Import/reindex progress | id, kind, state, ready_percent |
 
 **`lang` values** (semantic media types, not language names):
