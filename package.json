@@ -12,6 +12,11 @@
   "files": [
     "plugins/repoql-opencode/"
   ],
+  "pi": {
+    "skills": [
+      "./plugins/repoql-opencode/skills"
+    ]
+  },
   "engines": {
     "opencode": ">=2.0.0"
   }
