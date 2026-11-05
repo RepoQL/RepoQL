@@ -80,7 +80,7 @@ Start at the first move. Escalate only if it does not explain the symptom.
 | An uplink is `offline`, or a call says it is unreachable | Destination | Report the uplink by name | Its operator restores it; signing in again does not |
 | A tool is unsupported, or a parameter is unrecognized, on one uplink | Host | That uplink's host runs an older RepoQL than this connection expects | Its operator updates it. `query` often still works there |
 | A `query` or `read` errors with `Binder`, `Catalog`, `Parser` | Your input | Read the enriched error; `DESCRIBE` the view | Not an infrastructure fault |
-| A repository is not found | Index | `SELECT source_uri, file_count FROM Filesystems ORDER BY source_uri` on that uplink | Absent → it was never imported there; try the uplink that holds it, or ask the operator |
+| A repository is not found | Index | `SELECT uri, file_count FROM Filesystems ORDER BY uri` on that uplink | Absent → it was never imported there; try the uplink that holds it, or ask the operator |
 | Results look incomplete | Index | Read the footer; `SELECT * FROM engine_status` | Still filling → say so and scope the answer |
 | A recent change is not reflected | Index | Confirm it was pushed; read the footer `stale:` count | Unpushed work is in no uplink |
 | A specific file is missing or wrong | Index | `SELECT uri, reason, error FROM indexing_registry WHERE failures > 0` | Report the file and error to the operator |

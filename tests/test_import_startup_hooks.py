@@ -13,10 +13,14 @@ HARNESSES = ('repoql', 'repoql-codex', 'repoql-cursor')
 # The fake runs the hook's own SQL over a mount table, so the cases below hold the query's filter and not only
 # the rendering. SQLite stands in for DuckDB; the two functions it lacks are registered with DuckDB's meaning.
 # A legacy host has no Filesystems.kind, so it rejects the listing query and answers only the GitHub fallback.
+# The address column is uri from rql 1.7.20 and source_uri before it; the hooks pick it with DuckDB's COLUMNS
+# lambda, which the fake resolves to the one address column its table has. Any other reference to the column
+# fails here as it does in DuckDB.
 FAKE_RQL = r'''
-import os, sqlite3, sys
+import os, re, sqlite3, sys
 args = sys.argv[1:]
 mode = os.environ['IMPORT_TEST_MODE']
+address = 'source_uri' if mode in ('legacy', 'listed-before-rename') else 'uri'
 if args[:1] != ['query']:
     sys.exit(1 if args[:1] == ['uplinks'] else 0)
 if mode == 'unreachable':
@@ -49,13 +53,14 @@ db.create_function('concat_ws', -1, lambda separator, *parts: separator.join(str
 db.execute('CREATE TABLE Files (uri, extension, name)')
 db.executemany('INSERT INTO Files VALUES (?, ?, ?)', FILES)
 if mode == 'legacy':
-    db.execute('CREATE TABLE Filesystems (scheme, authority, path_prefix, source_uri)')
+    db.execute(f'CREATE TABLE Filesystems (scheme, authority, path_prefix, {address})')
     db.executemany('INSERT INTO Filesystems VALUES (?, ?, ?, ?)', [mount[1:] for mount in MOUNTS])
 else:
-    db.execute('CREATE TABLE Filesystems (kind, scheme, authority, path_prefix, source_uri)')
-    db.executemany('INSERT INTO Filesystems VALUES (?, ?, ?, ?, ?)', MOUNTS if mode == 'listed' else MOUNTS[:6])
+    db.execute(f'CREATE TABLE Filesystems (kind, scheme, authority, path_prefix, {address})')
+    db.executemany('INSERT INTO Filesystems VALUES (?, ?, ?, ?, ?)', MOUNTS if mode.startswith('listed') else MOUNTS[:6])
+sql = re.sub(r"COLUMNS\(c -> c IN \('uri', 'source_uri'\)\)", address, args[1])
 try:
-    rows = db.execute(args[1]).fetchall()
+    rows = db.execute(sql).fetchall()
 except sqlite3.Error as error:
     print(error, file=sys.stderr)
     sys.exit(1)
@@ -75,6 +80,7 @@ LISTED = [
 ]
 IMPORTS = {
     'listed': LISTED,
+    'listed-before-rename': LISTED,
     'legacy': ['github://acme/billing\ngithub://acme/widgets\n' + INVITATION],
     'none': ['(none)'],
     'unreachable': ['(not checked'],
@@ -101,7 +107,7 @@ class ImportStartupHooksTests(unittest.TestCase):
         self.assertNotIn('rql import', imports)
         self.assertNotIn('(memory:', context)
         self.assertEqual(context.count(CONCEPTS), 1)
-        if mode == 'listed':
+        if mode.startswith('listed'):
             self.assertIn('Use these URIs directly', imports)
             self.assertEqual([line for line in imports.splitlines() if '://' in line], sorted(LISTED))
             workspace = before_imports.split('## Workspace Repositories', 1)[1]
@@ -125,7 +131,7 @@ class ImportStartupHooksTests(unittest.TestCase):
                         self.assert_listing(context_from(result, harness), mode)
 
     def test_every_script_sends_the_same_listing_query(self):
-        queries = {re.search(r'WITH repos AS.*?ORDER BY section, source_uri',
+        queries = {re.search(r'WITH repos AS.*?ORDER BY section, uri"',
                              (ROOT / 'plugins' / harness / 'scripts' / f'session-start.{extension}').read_text(encoding='utf-8')).group(0)
                    for harness in HARNESSES for extension in ('sh', 'ps1')}
         self.assertEqual(len(queries), 1)
