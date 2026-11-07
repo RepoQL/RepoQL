@@ -56,7 +56,7 @@ The exhaustive, always-current catalog is host-served at `help:///schema/views/*
 
 `command()` exposes only a **thin slice** of the full `rql` CLI (host lifecycle, account, config, import, and a bit more), and that surface evolves — so **let `command("help")` be the source of truth** for what's callable in-session, and `command("<cmd> --help")` for one command's detail. Broader or missing recovery — MCP-bridge ops, updates — lives in the CLI: run it yourself with `! rql …` (use `! rql --help` or `help:///commands/` to list it).
 
-You can **see** far more than you can **change**. At the time of writing there's no queue cancel/retry/skip and no reindex command, so a stuck or failed file is fixed by waiting or `host restart` — but confirm the current surface with `command("help")` before concluding a command does or doesn't exist. And don't resurrect names from old docs or design notes (`queue.cancel`, `system_health()`, `reindex`, `failed_files()`) without checking — much of that was aspirational and never shipped.
+You can **see** far more than you can **change**. There's no queue cancel/retry/skip. To reprocess a stuck or failed file, run `host reindex --glob <glob>` with the narrowest glob that covers it; otherwise wait, or `host restart`. Confirm the current surface with `command("help")` before concluding a command does or doesn't exist. And don't resurrect names from old docs or design notes (`queue.cancel`, `system_health()`, `::reindex`, `failed_files()`) without checking — much of that was aspirational and never shipped.
 
 ### 7. When the host is down, SQL and `help://` are down too
 
