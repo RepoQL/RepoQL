@@ -26,13 +26,15 @@ You need a RepoQL account with access to at least one uplink. An organization ad
 
 ### A different endpoint
 
-The plugin connects to `https://mcp.repoql.com/uplink`. If your RepoQL service gave you another shared URL, set it before starting Claude Code:
+The plugin connects to `https://mcp.repoql.com/uplink`. The URL is written out in full, because the Claude desktop app and claude.ai take a connector URL literally and do not expand environment variables.
+
+If your RepoQL service gave you another shared URL, add it as your own connector instead of installing this plugin. In Claude Code:
 
 ```bash
-export REPOQL_UPLINK_URL=https://your-service.example/uplink
+claude mcp add --transport http repoql-uplink https://your-service.example/uplink
 ```
 
-The URL must be a shared connector URL, whose path ends in `/uplink`. A URL for one specific uplink is pinned to that uplink and is not what this plugin expects.
+In the desktop app or claude.ai, add it as a custom connector. The URL must be a shared connector URL, whose path ends in `/uplink`. A URL for one specific uplink is pinned to that uplink and is not what this plugin expects.
 
 ## What you get
 
@@ -80,7 +82,7 @@ The index reflects pushed code. Your uncommitted edits are not in it.
 | What you see | What to do |
 |---|---|
 | The server needs authentication | `/mcp` → the `repoql-uplink` server → sign in. |
-| The server fails to connect | Check the endpoint. Set `REPOQL_UPLINK_URL` if your service uses another shared URL. |
+| The server fails to connect | Check the endpoint. If your service uses another shared URL, add that URL as your own connector. |
 | No uplinks, or one is missing | Check the signed-in account and organization, then ask your RepoQL admin about access. |
 | An uplink is offline | Ask its operator to restore it. |
 | No default was selected | Name the uplink in your request, or sign in again to choose one. |

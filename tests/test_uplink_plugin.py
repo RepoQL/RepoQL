@@ -37,7 +37,7 @@ class UplinkPluginTests(unittest.TestCase):
         servers = json.loads((UPLINK / '.mcp.json').read_text(encoding='utf-8'))['mcpServers']
         self.assertEqual(list(servers), ['repoql-uplink'])
         self.assertEqual(servers['repoql-uplink'],
-                         {'type': 'http', 'url': '${REPOQL_UPLINK_URL:-https://mcp.repoql.com/uplink}'})
+                         {'type': 'http', 'url': 'https://mcp.repoql.com/uplink'})
         self.assertFalse((UPLINK / 'hooks').exists())
         self.assertFalse((UPLINK / 'scripts').exists())
 

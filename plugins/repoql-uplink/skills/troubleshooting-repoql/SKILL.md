@@ -69,7 +69,7 @@ Start at the first move. Escalate only if it does not explain the symptom.
 | Symptom | Layer | First move | Then |
 |---|---|---|---|
 | No RepoQL tools, or the server needs authentication | Connection | Tell the user to run `/mcp`, select the `repoql-uplink` server, and sign in | You cannot start the sign-in flow |
-| The server fails to connect, or the endpoint is not found | Connection | Confirm the endpoint with the user | `REPOQL_UPLINK_URL` sets another shared URL ending in `/uplink`, before Claude Code starts. A URL for one specific uplink is the wrong kind |
+| The server fails to connect, or the endpoint is not found | Connection | Confirm the endpoint with the user | The plugin always connects to `https://mcp.repoql.com/uplink`. For another shared URL ending in `/uplink`, the user adds it as their own connector. A URL for one specific uplink is the wrong kind |
 | "The shared uplink connector is not configured" | Connection | Report it; the service operator must enable the shared connector | Do not retry |
 | A refusal that names the organization or role, with no sign-in prompt | Access | The account is signed in but has no active role here | The organization admin grants it; signing in again does not |
 | "This connection is no longer authorized. Sign in again." | Access | The user signs in again through `/mcp` | If it repeats, access was revoked — the admin restores it |

@@ -2,7 +2,7 @@
   "mcpServers": {
     "repoql-uplink": {
       "type": "http",
-      "url": "${REPOQL_UPLINK_URL:-https://mcp.repoql.com/uplink}"
+      "url": "https://mcp.repoql.com/uplink"
     }
   }
 }
