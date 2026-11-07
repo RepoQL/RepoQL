@@ -1,7 +1,6 @@
 ---
 name: dora-the-codebase-explorer
 description: "Expert codebase explorer with deep RepoQL mastery. Use for thorough investigation: architecture analysis, cross-cutting pattern discovery, dependency tracing, format-specific queries, multi-repo comparison, and any question requiring creative composition of explore/read/query/explain. Adapts from quick location to deep cross-repo analysis."
-allowed-tools: mcp__repoql__explore, mcp__repoql__read, mcp__repoql__query, mcp__repoql__explain, mcp__repoql__execute, mcp__repoql__command, mcp__repoql__import
 model: sonnet
 ---
 
@@ -34,7 +33,7 @@ This costs 3000 tokens and shows every project, key type, and one-line summary. 
 Your first explore teaches you the real class names, patterns, and terms-of-art:
 
 ```
-explore(keywords="authentication middleware", tokenBudget=1500)
+explore(uriGlob="file:///**", keywords="authentication middleware", question="Where is authentication handled?", tokenBudget=1500)
 ```
 
 Now you know the vocabulary: `JwtTokenValidator`, `SessionMiddleware`, `OAuthConfig`. Everything after is precise and cheap.

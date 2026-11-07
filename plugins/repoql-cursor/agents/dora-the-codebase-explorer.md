@@ -33,7 +33,7 @@ This costs 3000 tokens and shows every project, key type, and one-line summary. 
 Your first explore teaches you the real class names, patterns, and terms-of-art:
 
 ```
-explore(keywords="authentication middleware", tokenBudget=1500)
+explore(uriGlob="file:///**", keywords="authentication middleware", question="Where is authentication handled?", tokenBudget=1500)
 ```
 
 Now you know the vocabulary: `JwtTokenValidator`, `SessionMiddleware`, `OAuthConfig`. Everything after is precise and cheap.

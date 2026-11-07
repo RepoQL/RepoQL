@@ -1,8 +1,8 @@
-# RepoQL Uplink Plugin for Claude Code
+# RepoQL Uplink Plugin for Claude
 
 Your organization's shared RepoQL indexes, from one remote connection. Nothing to install on this machine.
 
-An uplink is a RepoQL index your organization hosts. This plugin connects Claude Code to the single endpoint that reaches every uplink your account can access, so Claude can search and read your team's repositories without cloning them.
+An uplink is a RepoQL index your organization hosts. This plugin connects Claude to the single endpoint that reaches every uplink your account can access, so Claude can search and read your team's repositories without cloning them. It works in Claude Code, the Claude desktop app, and claude.ai.
 
 ## Which plugin
 
@@ -15,14 +15,26 @@ Install one. The `repoql` plugin already reaches the same uplinks through its lo
 
 ## Installation
 
+You need a RepoQL account with access to at least one uplink. An organization admin hosts one with `rql uplink`.
+
+### Claude Code
+
 ```
 /plugin marketplace add RepoQL/RepoQL
 /plugin install repoql-uplink@repoql-plugins
 ```
 
-Then run `/mcp`, select the `repoql-uplink` server, and sign in through the browser with the RepoQL account that has access to your team's uplinks. At sign-in you choose an organization and either a default uplink or to let the assistant choose per task.
+Then run `/mcp`, select the `repoql-uplink` server, and sign in through the browser.
 
-You need a RepoQL account with access to at least one uplink. An organization admin hosts one with `rql uplink`.
+### The Claude desktop app and claude.ai
+
+Install `repoql-uplink` from **Settings → Customize → Plugins**. On the plugin's **Connectors** tab, add the `repoql-uplink` connector. The setup dialog detects the right settings: keep **Sign in now** and **Use Claude's published identity**, then click **Add**. Click **Connect** and sign in through the browser.
+
+On a Team or Enterprise plan, an Owner can add the connector once under **Organization settings → Connectors**. Members then only click **Connect**.
+
+### At sign-in
+
+Sign in with the RepoQL account that has access to your team's uplinks. You choose an organization, and either a default uplink or to let the assistant choose per task.
 
 ### A different endpoint
 
@@ -61,11 +73,11 @@ The rest are the same skills the `repoql` plugin ships, loaded from the uplink a
 
 ### Agents
 
-**dora-the-codebase-explorer** investigates a codebase in its own context. **researcher** gathers evidence on one direction for the research skill.
+**dora-the-codebase-explorer** investigates your team's code through the uplinks in its own context, using only this connection's read tools. **researcher** gathers evidence on one direction for the research skill.
 
 ### No hooks, no binary
 
-The plugin starts no process and downloads nothing. It runs wherever Claude Code can reach the endpoint.
+The plugin starts no process and downloads nothing. It runs wherever Claude can reach the endpoint.
 
 ## How to use it
 
@@ -81,7 +93,7 @@ The index reflects pushed code. Your uncommitted edits are not in it.
 
 | What you see | What to do |
 |---|---|
-| The server needs authentication | `/mcp` → the `repoql-uplink` server → sign in. |
+| The server needs authentication | Claude Code: `/mcp` → the `repoql-uplink` server → sign in. Desktop app or claude.ai: the `repoql-uplink` connector → **Connect**. |
 | The server fails to connect | Check the endpoint. If your service uses another shared URL, add that URL as your own connector. |
 | No uplinks, or one is missing | Check the signed-in account and organization, then ask your RepoQL admin about access. |
 | An uplink is offline | Ask its operator to restore it. |
