@@ -10,6 +10,12 @@ UPLINK = ROOT / 'plugins' / 'repoql-uplink'
 # Skills written for the remote connection; the exemplar's version assumes a local host.
 OWNED_SKILLS = {'troubleshooting-repoql', 'using-uplinks'}
 
+# Agents written for the remote connection; the exemplar's version teaches local-only tools.
+OWNED_AGENTS = {'dora-the-codebase-explorer.md'}
+
+# Tools only a local host serves; this connection never offers them.
+LOCAL_ONLY_TOOLS = ('import(', 'execute(', 'command(', 'capture_concept(', 'capture_vocabulary(')
+
 # Exemplar skills that drive the local rql binary, which this plugin never installs.
 LOCAL_ONLY_SKILLS = {'monitoring-repoql', 'statusline-builder', 'writing-connectors', 'installing-connectors'}
 
@@ -31,13 +37,35 @@ class UplinkPluginTests(unittest.TestCase):
         for name in sorted(skill_names(UPLINK) - OWNED_SKILLS):
             with self.subTest(skill=name):
                 self.assertEqual(files_under(UPLINK / 'skills' / name), files_under(EXEMPLAR / 'skills' / name))
-        self.assertEqual(files_under(UPLINK / 'agents'), files_under(EXEMPLAR / 'agents'))
+        exemplar_agents = files_under(EXEMPLAR / 'agents')
+        uplink_agents = files_under(UPLINK / 'agents')
+        self.assertEqual(set(uplink_agents), set(exemplar_agents))
+        for name in sorted(set(uplink_agents) - OWNED_AGENTS):
+            with self.subTest(agent=name):
+                self.assertEqual(uplink_agents[name], exemplar_agents[name])
+
+    def test_owned_explorer_routes_by_uplink_and_teaches_only_read_tools(self):
+        text = (UPLINK / 'agents' / 'dora-the-codebase-explorer.md').read_text(encoding='utf-8')
+        self.assertIn('uplinks()', text)
+        self.assertIn('uplink="', text)
+        for call in LOCAL_ONLY_TOOLS:
+            with self.subTest(call=call):
+                self.assertNotIn(call, text)
+
+    def test_claude_agents_carry_no_dead_frontmatter_or_command_placeholders(self):
+        # Agents read `tools`, not `allowed-tools`, and never substitute $ARGUMENTS.
+        for plugin in (EXEMPLAR, UPLINK):
+            for path in sorted((plugin / 'agents').glob('*.md')):
+                with self.subTest(agent=f'{plugin.name}/{path.name}'):
+                    text = path.read_text(encoding='utf-8')
+                    self.assertNotIn('allowed-tools:', text)
+                    self.assertNotIn('$ARGUMENTS', text)
 
     def test_connects_to_one_remote_endpoint_and_starts_nothing(self):
         servers = json.loads((UPLINK / '.mcp.json').read_text(encoding='utf-8'))['mcpServers']
         self.assertEqual(list(servers), ['repoql-uplink'])
         self.assertEqual(servers['repoql-uplink'],
-                         {'type': 'http', 'url': '${REPOQL_UPLINK_URL:-https://mcp.repoql.com/uplink}'})
+                         {'type': 'http', 'url': 'https://mcp.repoql.com/uplink'})
         self.assertFalse((UPLINK / 'hooks').exists())
         self.assertFalse((UPLINK / 'scripts').exists())
 
