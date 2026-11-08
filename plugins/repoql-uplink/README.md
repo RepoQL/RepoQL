@@ -17,6 +17,8 @@ Install one. The `repoql` plugin already reaches the same uplinks through its lo
 
 You need a RepoQL account with access to at least one uplink. An organization admin hosts one with `rql uplink`.
 
+By using RepoQL, you agree to the [Customer Terms and Software Licence](https://repoql.com/terms/2026-09-11/).
+
 ### Claude Code
 
 ```
@@ -112,4 +114,6 @@ The `troubleshooting-repoql` skill carries the full table for the assistant.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Copyright Clanker Gear Limited.
+The files in this plugin — its skills, agents and connector configuration — are MIT-licensed. See [LICENSE](LICENSE). Copyright Clanker Gear Limited.
+
+The RepoQL service the plugin connects to is not part of this repository and is not MIT-licensed. It is provided under the [Customer Terms and Software Licence](https://repoql.com/terms/2026-09-11/).

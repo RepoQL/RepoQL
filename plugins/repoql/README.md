@@ -15,6 +15,8 @@ That's the whole install. The plugin starts its MCP server through a small launc
 
 If the `rql` host binary isn't on your machine yet, the launcher installs it by running the standard hosted installer for your platform. The result is identical to a manual install: one canonical binary that `rql update` and every other agent harness share; the plugin never keeps a private copy. The binary is about 180 MB, and the download runs detached, so closing the session does not abort it.
 
+By downloading and using RepoQL, you agree to the [Customer Terms and Software Licence](https://repoql.com/terms/2026-09-11/). Installing this plugin downloads RepoQL.
+
 The session start hook tells you what happened in one line — `RepoQL installed rql to ~/.local/bin.`, that the download is still running, or why the install could not run and the command to do it by hand — and says nothing when `rql` was already there. The install log is `~/.local/state/repoql/bootstrap.log`.
 
 What the first run looks like (measured with Claude Code 2.1.284):
@@ -146,4 +148,6 @@ Views: `Files`, `Functions`, `Types`, `Filesystems`, `Annotations`. Underlying t
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Copyright Clanker Gear Limited.
+The files in this plugin — its skills, agents, hooks and scripts — are MIT-licensed. See [LICENSE](LICENSE). Copyright Clanker Gear Limited.
+
+The plugin installs the `rql` binary, which is not part of this repository and is not MIT-licensed. `rql` is licensed under the [Customer Terms and Software Licence](https://repoql.com/terms/2026-09-11/).
