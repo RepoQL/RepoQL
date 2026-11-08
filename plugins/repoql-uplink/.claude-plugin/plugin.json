@@ -1,5 +1,6 @@
 {
   "name": "repoql-uplink",
+  "displayName": "RepoQL Uplink",
   "version": "1.0.4",
   "description": "Your organization's RepoQL uplinks from one remote connection — query shared code indexes with no local install.",
   "author": {
@@ -9,6 +10,7 @@
   "homepage": "https://repoql.com",
   "repository": "https://github.com/RepoQL/RepoQL",
   "license": "MIT",
+  "icon": "./assets/icon.png",
   "keywords": [
     "code-intelligence",
     "code-search",
