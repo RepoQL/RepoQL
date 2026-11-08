@@ -8,7 +8,7 @@ An uplink is a RepoQL index your organization hosts. This plugin connects Claude
 
 | You want | Install |
 |---|---|
-| Code intelligence for the repository you are working in, plus uplinks by name | [`repoql`](../repoql/README.md) |
+| Code intelligence for the repository you are working in, plus uplinks by name | [`repoql`](https://github.com/RepoQL/RepoQL/tree/main/plugins/repoql) |
 | Only your organization's shared indexes, with no local binary — a cloud session, a locked-down machine, a repository you have not cloned | `repoql-uplink` |
 
 Install one. The `repoql` plugin already reaches the same uplinks through its local tools.
@@ -63,7 +63,7 @@ In the desktop app or claude.ai, add it as a custom connector. The URL must be a
 
 Each read tool takes an optional `uplink`. Omit it to use your sign-in default; pass a name to send that one call elsewhere.
 
-The connection is read-only. Importing repositories, capturing concepts, and host administration need the [`repoql`](../repoql/README.md) plugin or the uplink's admin connection.
+The connection is read-only. Importing repositories, capturing concepts, and host administration need the [`repoql`](https://github.com/RepoQL/RepoQL/tree/main/plugins/repoql) plugin or the uplink's admin connection.
 
 ### Skills
 
@@ -78,6 +78,15 @@ The rest are the same skills the `repoql` plugin ships, loaded from the uplink a
 ### No hooks, no binary
 
 The plugin starts no process and downloads nothing. It runs wherever Claude can reach the endpoint.
+
+## What leaves your machine
+
+The plugin is one remote MCP connection to `https://mcp.repoql.com/uplink`. Nothing runs locally.
+
+- **Sign-in:** the connection signs in through your browser with OAuth, using your RepoQL account. Claude stores the resulting token; the plugin holds no credential of its own.
+- **Each tool call:** its parameters — globs, keywords, questions, SQL — go to `mcp.repoql.com`. The service relays the call to the uplink you choose, a RepoQL host that your organization runs, and returns that host's answer to Claude.
+- **What the answers contain:** code and documents from the repositories that uplink indexes, limited to the uplinks your account can access.
+RepoQL handles both under its privacy policy. See [Your data](https://repoql.com/docs/your-data/), the [privacy policy](https://repoql.com/privacy/) and the [subprocessors](https://repoql.com/subprocessors/).
 
 ## How to use it
 
@@ -103,4 +112,4 @@ The `troubleshooting-repoql` skill carries the full table for the assistant.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE). Copyright Clanker Gear Limited.
