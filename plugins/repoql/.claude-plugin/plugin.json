@@ -1,9 +1,10 @@
 {
   "name": "repoql",
-  "version": "1.7.14",
+  "displayName": "RepoQL",
+  "version": "1.7.18",
   "description": "Queryable code intelligence \u2014 explore codebase structure without reading files.",
   "author": {
-    "name": "Clanker Tools",
+    "name": "Clanker Gear Limited",
     "url": "https://repoql.com"
   },
   "homepage": "https://repoql.com",

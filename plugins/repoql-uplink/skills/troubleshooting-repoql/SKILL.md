@@ -26,7 +26,7 @@ This connection is read-only, and nothing runs on this machine. There is no host
 
 | Layer | Owner | Their fix |
 |---|---|---|
-| Connection | The user | Sign in through `/mcp`; correct the endpoint |
+| Connection | The user | Sign in (see the first row below); correct the endpoint |
 | Access | The organization's RepoQL admin | Grant or restore uplink access |
 | Destination, Host | The uplink's operator | Bring the host online; update its RepoQL |
 | Index | The uplink's operator, or time | Import the repository; let indexing finish |
@@ -68,11 +68,11 @@ Start at the first move. Escalate only if it does not explain the symptom.
 
 | Symptom | Layer | First move | Then |
 |---|---|---|---|
-| No RepoQL tools, or the server needs authentication | Connection | Tell the user to run `/mcp`, select the `repoql-uplink` server, and sign in | You cannot start the sign-in flow |
-| The server fails to connect, or the endpoint is not found | Connection | Confirm the endpoint with the user | `REPOQL_UPLINK_URL` sets another shared URL ending in `/uplink`, before Claude Code starts. A URL for one specific uplink is the wrong kind |
+| No RepoQL tools, or the server needs authentication | Connection | Tell the user how to sign in. In Claude Code: run `/mcp`, select the `repoql-uplink` server, and sign in. In the desktop app or claude.ai: open the `repoql-uplink` connector in Settings and click **Connect** | You cannot start the sign-in flow |
+| The server fails to connect, or the endpoint is not found | Connection | Confirm the endpoint with the user | The plugin always connects to `https://mcp.repoql.com/uplink`. For another shared URL ending in `/uplink`, the user adds it as their own connector. A URL for one specific uplink is the wrong kind |
 | "The shared uplink connector is not configured" | Connection | Report it; the service operator must enable the shared connector | Do not retry |
 | A refusal that names the organization or role, with no sign-in prompt | Access | The account is signed in but has no active role here | The organization admin grants it; signing in again does not |
-| "This connection is no longer authorized. Sign in again." | Access | The user signs in again through `/mcp` | If it repeats, access was revoked — the admin restores it |
+| "This connection is no longer authorized. Sign in again." | Access | The user signs in again, the same way as above | If it repeats, access was revoked — the admin restores it |
 | "Uplink access could not be verified. Retry shortly." or a 503 | Access | Retry once after a short wait | The membership check is temporarily unavailable; the sign-in is still good |
 | `uplinks()` lists nothing, or an expected uplink is missing | Access | Check the organization in the result | Wrong organization → sign in again and choose it. Right organization → the admin grants access |
 | "No default uplink was selected at sign-in" | Destination | `uplinks()`, then pass `uplink="<name>"` | To set a default, the user signs in again |
@@ -80,7 +80,7 @@ Start at the first move. Escalate only if it does not explain the symptom.
 | An uplink is `offline`, or a call says it is unreachable | Destination | Report the uplink by name | Its operator restores it; signing in again does not |
 | A tool is unsupported, or a parameter is unrecognized, on one uplink | Host | That uplink's host runs an older RepoQL than this connection expects | Its operator updates it. `query` often still works there |
 | A `query` or `read` errors with `Binder`, `Catalog`, `Parser` | Your input | Read the enriched error; `DESCRIBE` the view | Not an infrastructure fault |
-| A repository is not found | Index | `SELECT source_uri, file_count FROM Filesystems ORDER BY source_uri` on that uplink | Absent → it was never imported there; try the uplink that holds it, or ask the operator |
+| A repository is not found | Index | `SELECT uri, file_count FROM Filesystems ORDER BY uri` on that uplink | Absent → it was never imported there; try the uplink that holds it, or ask the operator |
 | Results look incomplete | Index | Read the footer; `SELECT * FROM engine_status` | Still filling → say so and scope the answer |
 | A recent change is not reflected | Index | Confirm it was pushed; read the footer `stale:` count | Unpushed work is in no uplink |
 | A specific file is missing or wrong | Index | `SELECT uri, reason, error FROM indexing_registry WHERE failures > 0` | Report the file and error to the operator |

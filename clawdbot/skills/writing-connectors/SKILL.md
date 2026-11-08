@@ -10,7 +10,7 @@ description: "Write, extend, fix or review a RepoQL connector: the two files tha
 Read the complete skill from the installed version of `rql` before proceeding:
 
 ```
-read("help:///skills/writing-connectors/SKILL.md => content", 6000)
+repoql_read(uriGlob="help:///skills/writing-connectors/SKILL.md => content", tokenBudget=6000)
 ```
 
 If the page is not found, the installed `rql` is older than this skill. Run `rql update`, then read it again.

@@ -10,7 +10,7 @@ description: "Install a connector that already exists and import a source throug
 Read the complete skill from the installed version of `rql` before proceeding:
 
 ```
-read("help:///skills/installing-connectors/SKILL.md => content", 6000)
+repoql_read(uriGlob="help:///skills/installing-connectors/SKILL.md => content", tokenBudget=6000)
 ```
 
 If the page is not found, the installed `rql` is older than this skill. Run `rql update`, then read it again.

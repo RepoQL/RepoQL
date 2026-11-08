@@ -19,7 +19,7 @@ FROM engine_status;
 The footer's `stale: N` is the count of **dirty** files — changed on disk and flagged for re-indexing (`stale` = `registry.Dirty`; list them with `SELECT uri FROM indexing_registry WHERE dirty`). The fix depends on *what* is stale:
 
 - **Your workspace is watched** — edits are flagged dirty and re-swept automatically. A `stale` count that's *dropping* is normal catch-up; wait and re-run. A count that's *stuck* (not falling) means the watcher or sweep is wedged — check `indexing_queue`, and `host restart` if nothing is moving.
-- **Imported repos are NOT watched** (`watching = False` in `Filesystems`). They're static snapshots — editing upstream or pulling won't refresh them. **Re-run `import add --uri …`** to refresh an import. Check which mounts are live: `SELECT source_uri, watching FROM Filesystems`.
+- **Imported repos are NOT watched** (`watching = False` in `Filesystems`). They're static snapshots — editing upstream or pulling won't refresh them. **Re-run `import add --uri …`** to refresh an import. Check which mounts are live: `SELECT uri, watching FROM Filesystems`.
 
 A `ready` footer with no `stale` segment means the index reflects the working tree.
 

@@ -58,6 +58,15 @@ echo fetched >>"$HOME/curl-calls"
 cp "$FAKE_INSTALLER" "$out"
 '''
 
+# The check-then-create mkdir of uutils, Ubuntu 26.04's default: it refuses a directory that already exists,
+# but two callers that both look before either creates both succeed. The pause makes that race certain.
+RACY_MKDIR = '''#!/bin/bash
+case "$1" in -*) exec /bin/mkdir "$@" ;; esac
+[ -e "$1" ] && { echo "mkdir: $1: File exists" >&2; exit 1; }
+sleep 0.5
+/bin/mkdir -p "$1"
+'''
+
 INITIALIZE = {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {
     'protocolVersion': '2025-06-18', 'capabilities': {}, 'clientInfo': {'name': 'test', 'version': '1'}}}
 
@@ -177,6 +186,14 @@ class McpBootstrap(unittest.TestCase):
         self.assertIn('rql is unavailable', process.stderr.read())
 
     def test_concurrent_callers_share_one_download(self):
+        callers = [self.bootstrap(FAKE_DOWNLOAD_SECONDS='2') for _ in range(3)]
+        self.assertEqual([caller.wait(timeout=30) for caller in callers], [0, 0, 0])
+        self.assertEqual((self.home / 'curl-calls').read_text().count('fetched'), 1)
+        self.assertEqual(self.log.read_text().count('installing from downloads.repoql.ai'), 1)
+
+    def test_concurrent_callers_share_one_download_when_mkdir_is_not_atomic(self):
+        (self.home / 'tools' / 'mkdir').write_text(RACY_MKDIR)
+        (self.home / 'tools' / 'mkdir').chmod(0o755)
         callers = [self.bootstrap(FAKE_DOWNLOAD_SECONDS='2') for _ in range(3)]
         self.assertEqual([caller.wait(timeout=30) for caller in callers], [0, 0, 0])
         self.assertEqual((self.home / 'curl-calls').read_text().count('fetched'), 1)

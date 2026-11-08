@@ -116,12 +116,14 @@ async function buildOrientation(host: RqlHostManager, config: RepoQlPluginConfig
 // Every mounted source except the ones named in the WHERE clause, which the agent already knows or did not ask
 // for: the primary file:///, help, memory, and worktrees. A new kind of mount is listed by default, with its kind
 // in brackets. A host that predates Filesystems.kind rejects this and answers the GitHub-only listing instead.
+// The address column is uri from rql 1.7.20 and source_uri before it; COLUMNS picks whichever the host has.
 const MOUNTS_SQL =
-  "SELECT source_uri || CASE WHEN kind NOT IN ('workspace', 'import') THEN ' (' || kind || ')' ELSE '' END AS line " +
-  "FROM Filesystems WHERE scheme NOT IN ('file', 'help', 'concept', 'vocabulary', 'worktree') " +
-  "AND coalesce(kind, '') NOT IN ('primary', 'worktree') ORDER BY source_uri";
+  "SELECT uri || CASE WHEN kind NOT IN ('workspace', 'import') THEN ' (' || kind || ')' ELSE '' END AS line " +
+  "FROM (SELECT kind, scheme, COLUMNS(c -> c IN ('uri', 'source_uri')) AS uri FROM Filesystems) " +
+  "WHERE scheme NOT IN ('file', 'help', 'concept', 'vocabulary', 'worktree') " +
+  "AND coalesce(kind, '') NOT IN ('primary', 'worktree') ORDER BY uri";
 const LEGACY_MOUNTS_SQL =
-  "SELECT source_uri AS line FROM Filesystems WHERE starts_with(source_uri, 'github://') ORDER BY source_uri";
+  "SELECT uri AS line FROM (SELECT COLUMNS(c -> c IN ('uri', 'source_uri')) AS uri FROM Filesystems) WHERE starts_with(uri, 'github://') ORDER BY uri";
 const SOURCE_LINE = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 /**

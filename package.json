@@ -1,7 +1,8 @@
 {
   "name": "repoql",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "RepoQL plugin for OpenCode 2 — RepoQL's MCP server and skills. Install with: opencode plugin add github:RepoQL/RepoQL",
+  "author": "Clanker Gear Limited",
   "license": "MIT",
   "homepage": "https://repoql.com",
   "repository": "github:RepoQL/RepoQL",

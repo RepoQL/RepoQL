@@ -20,11 +20,11 @@ The result names the organization, the default chosen at sign-in, and each acces
 Then find what the chosen uplink holds, and scope by the URIs it returns:
 
 ```
-query(sql="SELECT source_uri, file_count FROM Filesystems ORDER BY source_uri", uplink="acme/platform")
+query(sql="SELECT uri, file_count FROM Filesystems ORDER BY uri", uplink="acme/platform")
 explore(uriGlob="github://acme/api/**", keywords="authentication", question="Where are access tokens checked?", uplink="acme/platform")
 ```
 
-`acme/platform` and `github://acme/api` are placeholders for discovered values. `file:///` addresses the uplink host's own workspace, never this machine.
+`acme/platform` and `github://acme/api` are placeholders for discovered values. An uplink can run an older rql than this machine; before rql 1.7.20 the `uri` column was named `source_uri`. `file:///` addresses the uplink host's own workspace, never this machine.
 
 ## Route every call deliberately
 

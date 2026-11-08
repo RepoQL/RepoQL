@@ -26,7 +26,7 @@ Common working-directory failures:
 Confirm what you're actually attached to:
 
 ```sql
-SELECT scheme, authority, source_uri, local_path, file_count FROM Filesystems;
+SELECT scheme, authority, uri, local_path, file_count FROM Filesystems;
 ```
 
 The local mount's `local_path` is the workspace root the host resolved. If it isn't the repo you meant, the working directory is your bug — nothing downstream will be right until it is.
