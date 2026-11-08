@@ -1,11 +1,12 @@
 {
   "name": "@repoql/repoql",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "OpenClaw plugin for RepoQL - queryable repository intelligence powered by rql",
   "main": "./dist/index.js",
   "type": "module",
   "files": [
     "dist",
+    "assets",
     "skills",
     "openclaw.plugin.json",
     "README.md"
@@ -26,7 +27,7 @@
     "code-understanding",
     "grpc"
   ],
-  "author": "Stuart Wilson",
+  "author": "Clanker Gear Limited",
   "license": "MIT",
   "repository": {
     "type": "git",
