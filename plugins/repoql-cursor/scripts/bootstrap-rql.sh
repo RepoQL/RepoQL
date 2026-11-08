@@ -68,6 +68,7 @@ state_dir="${REPOQL_STATE_DIR:-$HOME/.local/state/repoql}"
 mkdir -p "$state_dir" 2>/dev/null || unavailable "could not run: cannot create the state directory $state_dir"
 log="$state_dir/bootstrap.log"
 lock="$state_dir/bootstrap.lock"
+owner="$state_dir/bootstrap.pid"
 
 # One download across concurrent sessions. A stale lock (>15 min — e.g. a hook
 # killed mid-download) is reclaimed; the installers' temp-then-rename download
@@ -76,21 +77,38 @@ lock="$state_dir/bootstrap.lock"
 # report a failure that has not happened.
 wait_limit="${REPOQL_BOOTSTRAP_WAIT:-60}"
 case "$wait_limit" in ''|*[!0-9]*) wait_limit=60 ;; esac
+
+# The directory is the lock every plugin's bootstrap knows, but mkdir alone is
+# not a mutex everywhere: uutils mkdir, the default on Ubuntu 26.04, checks and
+# then creates, so two callers racing for a missing lock can both "create" it.
+# The owner record is the tiebreak. noclobber has bash open it with O_EXCL, so
+# exactly one caller creates it and only that caller holds the lock. It holds
+# this process's pid, which the Claude Code plugin's bootstrap checks with
+# kill -0 to tell a live holder from a dead one.
+claim_lock() {
+    mkdir "$lock" 2>/dev/null || return 1
+    ( set -C; echo $$ >"$owner" ) 2>/dev/null
+}
+
 waited=0
-until mkdir "$lock" 2>/dev/null; do
+until claim_lock; do
     if [ ! -d "$lock" ]; then
         # Released between the two checks, or the state dir is not writable.
-        mkdir "$lock" 2>/dev/null && break
-        unavailable "could not run: cannot write to the state directory $state_dir"
+        claim_lock && break
+        [ -d "$lock" ] || unavailable "could not run: cannot write to the state directory $state_dir"
     fi
-    find "$lock" -maxdepth 0 -mmin +15 -exec rmdir {} \; 2>/dev/null
-    [ -d "$lock" ] || continue
+    # A stale lock goes with its owner record, or no caller could claim it again.
+    if [ -n "$(find "$lock" -maxdepth 0 -mmin +15 2>/dev/null)" ]; then
+        rm -f "$owner"
+        rmdir "$lock" 2>/dev/null
+        continue
+    fi
     rql_available && exit 0
     [ "$waited" -ge "$wait_limit" ] && exit 2
     sleep 1
     waited=$((waited + 1))
 done
-trap 'rmdir "$lock" 2>/dev/null' EXIT
+trap 'rm -f "$owner"; rmdir "$lock" 2>/dev/null' EXIT
 # The session that held the lock may have finished the install.
 rql_available && exit 0
 
