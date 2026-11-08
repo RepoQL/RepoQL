@@ -75,6 +75,17 @@ lock_live() {
     fi
 }
 
+# The directory is the lock every caller knows, bootstrap-rql.ps1 included,
+# but mkdir alone is not a mutex everywhere: uutils mkdir, the default on
+# Ubuntu 26.04, checks and then creates, so two workers racing for a missing
+# lock can both "create" it. The owner record is the tiebreak. noclobber has
+# bash itself open it with O_EXCL, so exactly one worker creates it and only
+# that worker holds the lock.
+claim_lock() {
+    mkdir "$lock" 2>/dev/null || return 1
+    ( set -C; echo $$ >"$owner" ) 2>/dev/null
+}
+
 # The hosted installer's own downloads are unbounded; a stalled one would hold
 # the lock forever, so the whole install gets a deadline.
 install_deadline=900
@@ -112,13 +123,12 @@ install() {
 if [ "$1" = "--worker" ]; then
     # Detached from whoever started it: only an explicit TERM stops it early.
     trap '' HUP INT
-    if ! mkdir "$lock" 2>/dev/null; then
+    if ! claim_lock; then
         lock_live && exit 0
         rm -f "$owner"
         rmdir "$lock" 2>/dev/null
-        mkdir "$lock" 2>/dev/null || exit 0
+        claim_lock || exit 0
     fi
-    echo $$ >"$owner"
     trap 'rm -f "$owner"; rmdir "$lock" 2>/dev/null' EXIT
     trap 'exit 1' TERM
     rql_available && exit 0
