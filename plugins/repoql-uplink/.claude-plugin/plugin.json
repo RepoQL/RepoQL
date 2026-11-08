@@ -5,12 +5,17 @@
   "description": "Your organization's RepoQL uplinks from one remote connection — query shared code indexes with no local install.",
   "author": {
     "name": "Clanker Gear Limited",
+    "email": "support@repoql.ai",
     "url": "https://repoql.com"
   },
   "homepage": "https://repoql.com",
   "repository": "https://github.com/RepoQL/RepoQL",
   "license": "MIT",
   "icon": "./assets/icon.png",
+  "documentationUrl": "https://repoql.com/docs/",
+  "supportUrl": "mailto:support@repoql.ai",
+  "privacyPolicyUrl": "https://repoql.com/privacy/",
+  "termsOfServiceUrl": "https://repoql.com/terms/",
   "keywords": [
     "code-intelligence",
     "code-search",
