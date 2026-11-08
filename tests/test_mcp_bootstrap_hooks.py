@@ -55,6 +55,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 echo fetched >>"$HOME/curl-calls"
+echo "$(date +%s.%N) curl pid=$$ ppid=$PPID" >>"$HOME/.local/state/repoql/trace"
 cp "$FAKE_INSTALLER" "$out"
 '''
 
@@ -179,7 +180,9 @@ class McpBootstrap(unittest.TestCase):
     def test_concurrent_callers_share_one_download(self):
         callers = [self.bootstrap(FAKE_DOWNLOAD_SECONDS='2') for _ in range(3)]
         self.assertEqual([caller.wait(timeout=30) for caller in callers], [0, 0, 0])
-        self.assertEqual((self.home / 'curl-calls').read_text().count('fetched'), 1)
+        trace = self.home / '.local' / 'state' / 'repoql' / 'trace'
+        evidence = (trace.read_text() if trace.exists() else 'no trace') + '\n--- log ---\n' + self.log.read_text()
+        self.assertEqual((self.home / 'curl-calls').read_text().count('fetched'), 1, evidence)
         self.assertEqual(self.log.read_text().count('installing from downloads.repoql.ai'), 1)
 
     def test_a_caller_that_runs_out_of_time_reports_it_and_the_download_finishes(self):

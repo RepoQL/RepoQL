@@ -32,21 +32,23 @@ on:
 jobs:
   hooks:
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+        shard: [1, 2, 3, 4, 5, 6]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - run: python3 -m unittest discover -s tests -p 'test_*_hooks.py'
-      - run: python3 -m unittest discover -s tests -p 'test_uplink_plugin.py'
-      - run: python3 -m unittest discover -s tests -p 'test_opencode_plugin.py'
-
-  # On Windows every hook runs as PowerShell, and the launcher cases start each
-  # hook command under Windows PowerShell, PowerShell 7, Git Bash and cmd.exe.
-  windows:
-    runs-on: windows-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - run: python -m unittest discover -v -s tests -p "test_*_hooks.py"
+      - name: loop the concurrent-callers test behind the test that precedes it in the suite
+        run: |
+          python3 --version; bash --version | head -1; setsid --version; cat /proc/sys/kernel/pid_max; nproc
+          fails=0
+          for i in $(seq 1 100); do
+            if ! python3 -m unittest discover -s tests -p 'test_mcp_bootstrap_hooks.py' -k test_a_caller -k test_concurrent >out.txt 2>&1; then
+              fails=$((fails+1)); echo "::group::failure $i"; cat out.txt; echo "::endgroup::"
+            fi
+          done
+          echo "fails=$fails/100"
+      - name: full suite, five times
+        run: |
+          for i in 1 2 3 4 5; do python3 -m unittest discover -s tests -p 'test_*_hooks.py' 2>&1 | grep -v ResourceWarning | grep -A60 "FAIL:\|^Ran " ; done

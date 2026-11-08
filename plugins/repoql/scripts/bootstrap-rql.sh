@@ -59,6 +59,7 @@ log="$state_dir/bootstrap.log"
 lock="$state_dir/bootstrap.lock"
 owner="$state_dir/bootstrap.pid"
 
+dbg() { [ -d "$state_dir" ] && echo "$(date +%s.%N) pid=$$ ppid=$PPID $*" >>"$state_dir/trace"; }
 say() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >>"$log"; }
 
 # A lock is live while its recorded worker runs. A lock with no recorded
@@ -68,6 +69,7 @@ lock_live() {
     [ -d "$lock" ] || return 1
     local pid
     pid=$(cat "$owner" 2>/dev/null)
+    dbg "lock_live owner=[$pid] alive=$(kill -0 "$pid" 2>/dev/null && echo y || echo n) mtime=$(stat -c %Y "$lock" 2>/dev/null) now=$(date +%s)"
     if [ -n "$pid" ]; then
         kill -0 "$pid" 2>/dev/null
     else
@@ -112,18 +114,24 @@ install() {
 if [ "$1" = "--worker" ]; then
     # Detached from whoever started it: only an explicit TERM stops it early.
     trap '' HUP INT
+    dbg "worker start sid=$(ps -o sid=,pgid= $$) rql=$(command -v rql)"
     if ! mkdir "$lock" 2>/dev/null; then
-        lock_live && exit 0
+        dbg "mkdir failed"
+        lock_live && { dbg "lock live, leaving"; exit 0; }
+        dbg "TAKEOVER"
         rm -f "$owner"
         rmdir "$lock" 2>/dev/null
         mkdir "$lock" 2>/dev/null || exit 0
     fi
     echo $$ >"$owner"
+    dbg "holds lock"
     trap 'rm -f "$owner"; rmdir "$lock" 2>/dev/null' EXIT
-    trap 'exit 1' TERM
-    rql_available && exit 0
+    trap 'dbg "got TERM"; exit 1' TERM
+    rql_available && { dbg "rql present, leaving"; exit 0; }
+    dbg "installing"
     say "rql missing — installing from downloads.repoql.ai"
     install
+    dbg "install returned $? rql=$(command -v rql)"
     rql_available && exit 0
     say "bootstrap failed"
     exit 1
@@ -154,6 +162,7 @@ detach=""
 command -v setsid >/dev/null 2>&1 && detach="setsid"
 $detach bash "$0" --worker </dev/null >/dev/null 2>&1 &
 worker=$!
+dbg "caller spawned worker=$worker detach=$detach"
 
 waited=0
 wait_limit="${REPOQL_BOOTSTRAP_WAIT:-200}"
