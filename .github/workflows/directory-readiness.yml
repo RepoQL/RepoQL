@@ -1,0 +1,43 @@
+# Keeps the Claude Code plugins submittable to the Claude plugin directory:
+# strict schema validation by Claude Code itself, then the directory's own
+# layout, README, license and file rules (.github/scripts/directory-readiness.sh).
+name: directory-readiness
+
+on:
+  pull_request:
+    paths:
+      - "plugins/repoql/**"
+      - "plugins/repoql-uplink/**"
+      - ".claude-plugin/**"
+      - ".github/scripts/directory-readiness.sh"
+      - ".github/workflows/directory-readiness.yml"
+  push:
+    branches: [main]
+    paths:
+      - "plugins/repoql/**"
+      - "plugins/repoql-uplink/**"
+      - ".claude-plugin/**"
+      - ".github/scripts/directory-readiness.sh"
+      - ".github/workflows/directory-readiness.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code@2.1.284
+
+      - name: Validate the marketplace and each plugin strictly
+        run: |
+          claude plugin validate .
+          claude plugin validate --strict plugins/repoql
+          claude plugin validate --strict plugins/repoql-uplink
+
+      - name: Check the directory's layout, README, license and file rules
+        run: bash .github/scripts/directory-readiness.sh
