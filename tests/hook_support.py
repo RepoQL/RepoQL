@@ -38,10 +38,39 @@ def install_fake(bin_dir, name, source):
         return
     program = bin_dir / f'{name}.py'
     program.write_text(source, encoding='utf-8')
-    # PowerShell and a directly started process run the batch file; Git Bash finds the extensionless shell script.
-    (bin_dir / f'{name}.cmd').write_text(f'@"{sys.executable}" "{program}" %*\r\n', encoding='utf-8', newline='')
+    # PowerShell and a directly started process run the .exe, as they run the real rql.exe; Git Bash finds the
+    # extensionless shell script. A batch file is only the fallback: cmd.exe ends an argument at its first line
+    # break and drops every argument after it, which no .exe does.
+    launcher = _console_launcher()
+    if launcher:
+        (bin_dir / f'{name}.exe').write_bytes(launcher + _zipped_main(source))
+    else:
+        (bin_dir / f'{name}.cmd').write_text(f'@"{sys.executable}" "{program}" %*\r\n', encoding='utf-8', newline='')
     (bin_dir / name).write_text(
         f'#!/bin/sh\nexec "{Path(sys.executable).as_posix()}" "{program.as_posix()}" "$@"\n', encoding='utf-8', newline='\n')
+
+
+def _console_launcher():
+    """The launcher pip puts in front of every Windows console script, or None where pip does not ship one."""
+    try:
+        import pip._vendor.distlib as distlib
+    except ImportError:
+        return None
+    path = Path(distlib.__file__).parent / ('t64.exe' if sys.maxsize > 2 ** 32 else 't32.exe')
+    return path.read_bytes() if path.exists() else None
+
+
+def _zipped_main(source):
+    """What the launcher reads after itself: a shebang naming this Python, then a zip whose __main__.py is the program.
+
+    The launcher hands its command line to that Python unchanged, so every argument arrives byte for byte.
+    """
+    import io
+    import zipfile
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, 'w') as zipped:
+        zipped.writestr('__main__.py', source)
+    return f'#!"{sys.executable}"\r\n'.encode('utf-8') + archive.getvalue()
 
 
 def hook_env(bin_dir, **extra):

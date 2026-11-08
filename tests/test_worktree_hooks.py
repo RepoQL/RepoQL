@@ -160,6 +160,95 @@ class WorktreeHooksTests(Cases, unittest.TestCase):
                 self.run_hook(implementation, 'worktree-check-hook', payload)
                 self.assertEqual(self.calls(), [])
 
+    def bash_payload(self, event, command, **extra):
+        return {'hook_event_name': event, 'session_id': 'wt-session', 'cwd': str(self.project),
+                'tool_name': 'Bash', 'tool_input': {'command': command, 'description': 'run it'}, **extra}
+
+    def test_worktree_add_is_announced_before_it_runs_and_prints_nothing(self):
+        command = 'cd "$repo" && git worktree add "$dest" -b feat/x origin/main\necho done'
+        payload = self.bash_payload('PreToolUse', command, agent_id='agent-7')
+        for implementation in self.each():
+            with self.case(implementation=implementation):
+                result = self.run_hook(implementation, 'worktree-before-command-hook', payload)
+                self.assertEqual(result.stdout, '')
+                call, = self.calls()
+                self.assertEqual(call['args'], ['worktree', 'check', '--before-command', command,
+                                                '--session', 'wt-session', '--agent', 'agent-7'])
+                self.assert_reads_from_the_project(call)
+
+    def test_other_bash_commands_start_no_rql_before_they_run(self):
+        for implementation in self.each():
+            with self.case(implementation=implementation):
+                self.run_hook(implementation, 'worktree-before-command-hook', self.bash_payload('PreToolUse', 'git worktree list'))
+                self.assertEqual(self.calls(), [])
+
+    def test_failed_before_command_never_blocks(self):
+        self.env['HOOK_MODE'] = 'failure'
+        for implementation in self.each():
+            with self.case(implementation=implementation):
+                result = self.run_hook(implementation, 'worktree-before-command-hook',
+                                       self.bash_payload('PreToolUse', 'git worktree add ../x'))
+                self.assertEqual(result.stdout, '')
+
+    def test_worktree_add_is_forwarded_with_its_ids_then_returns_notice(self):
+        command = 'git worktree add "$dest" -b feat/x origin/main'
+        payload = self.bash_payload('PostToolUse', command, agent_id='agent-7',
+                                    tool_response={'stdout': 'Preparing worktree', 'stderr': ''})
+        for implementation in self.each():
+            with self.case(implementation=implementation):
+                result = self.run_hook(implementation, 'worktree-command-hook', payload)
+                self.assertEqual(context_of(result, 'PostToolUse'), 'RepoQL worktree notice: this result covers src/A.cs.')
+                call, = self.calls()
+                self.assertEqual(call['args'], ['worktree', 'check', '--command', command,
+                                                '--session', 'wt-session', '--agent', 'agent-7'])
+                self.assertEqual(call['stdin'], '')
+                self.assert_reads_from_the_project(call)
+
+    def test_other_bash_commands_start_no_rql_after_they_run(self):
+        for command in ('git worktree list', "grep -rn MountStore '%s/src'" % self.worktree, 'ls'):
+            payload = self.bash_payload('PostToolUse', command, agent_id='agent-7')
+            for implementation in self.each():
+                with self.case(implementation=implementation, command=command):
+                    result = self.run_hook(implementation, 'worktree-command-hook', payload)
+                    self.assertEqual(result.stdout, '')
+                    self.assertEqual(self.calls(), [])
+
+    def test_worktree_add_command_reaches_rql_byte_for_byte(self):
+        for command in ('git worktree add ../x\n', 'git worktree add\t../x', 'cd a\tb && git worktree add ../x\n\n',
+                        "git worktree add 'it''s' \\n"):
+            for hook, option in (('worktree-before-command-hook', '--before-command'), ('worktree-command-hook', '--command')):
+                payload = self.bash_payload('PostToolUse', command)
+                for implementation in self.each():
+                    with self.case(implementation=implementation, hook=hook, command=command):
+                        self.run_hook(implementation, hook, payload)
+                        call, = self.calls()
+                        self.assertEqual(call['args'], ['worktree', 'check', option, command, '--session', 'wt-session'])
+
+    def test_silent_or_failed_command_check_emits_nothing(self):
+        for mode in ('silent', 'failure'):
+            self.env['HOOK_MODE'] = mode
+            for implementation in self.each():
+                with self.case(implementation=implementation, mode=mode):
+                    result = self.run_hook(implementation, 'worktree-command-hook', self.bash_payload('PostToolUse', 'git worktree add ../x'))
+                    self.assertEqual(result.stdout, '')
+
+    def test_subagent_start_forwards_ids_and_replies_for_subagent_start(self):
+        payload = {'hook_event_name': 'SubagentStart', 'session_id': 'wt-session', 'agent_id': 'agent-7',
+                   'agent_type': 'general-purpose', 'cwd': str(self.project), 'transcript_path': '/t.jsonl'}
+        for implementation in self.each():
+            with self.case(implementation=implementation):
+                result = self.run_hook(implementation, 'worktree-subagent-hook', payload)
+                self.assertEqual(context_of(result, 'SubagentStart'), 'RepoQL worktree notice: this result covers src/A.cs.')
+                call, = self.calls()
+                self.assertEqual(call['args'], ['worktree', 'check', '--subagent', '--session', 'wt-session', '--agent', 'agent-7'])
+                self.assert_reads_from_the_project(call)
+
+    def test_subagent_start_without_agent_id_omits_it(self):
+        for implementation in self.each():
+            with self.case(implementation=implementation):
+                self.run_hook(implementation, 'worktree-subagent-hook', {'session_id': 'wt-session'})
+                self.assertEqual(self.calls()[0]['args'], ['worktree', 'check', '--subagent', '--session', 'wt-session'])
+
 
 if __name__ == '__main__':
     unittest.main()

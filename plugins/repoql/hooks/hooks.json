@@ -13,6 +13,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ". \"${CLAUDE_PLUGIN_ROOT}/scripts/worktree-before-command-hook.cmd\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "SessionStart": [
@@ -54,6 +64,27 @@
           {
             "type": "command",
             "command": ". \"${CLAUDE_PLUGIN_ROOT}/scripts/worktree-check-hook.cmd\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ". \"${CLAUDE_PLUGIN_ROOT}/scripts/worktree-command-hook.cmd\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ". \"${CLAUDE_PLUGIN_ROOT}/scripts/worktree-subagent-hook.cmd\"",
             "timeout": 5
           }
         ]
