@@ -147,28 +147,24 @@ jobs:
         run: |
           $state = Join-Path $HOME '.local\state\repoql'
           $bs = (Resolve-Path plugins\repoql\scripts\bootstrap-rql.ps1).Path
-          $variants = @(
-            '<nul >nul 2>nul',
-            '<nul 2>nul >o.txt',
-            '<nul >nul 2>e.txt',
-            '>nul 2>nul',
-            '<nul >nul',
-            '<nul >o.txt 2>e.txt'
-          )
-          foreach ($v in $variants) {
+          "PSModulePath=$env:PSModulePath"
+          foreach ($clear in @($false, $true)) {
             Remove-Item -Recurse -Force $state, (Join-Path $env:LOCALAPPDATA 'rql') -ErrorAction SilentlyContinue
-            $sw = [Diagnostics.Stopwatch]::StartNew()
-            cmd /c "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$bs`" $v"
-            $ok = Test-Path (Join-Path $env:LOCALAPPDATA 'rql\rql.exe')
-            "VARIANT [$v] installed=$ok after $($sw.Elapsed.TotalSeconds)s"
-            if (-not $ok) { Get-Content (Join-Path $state 'bootstrap.log') | Select-Object -Last 3 }
+            $pre = if ($clear) { 'set "PSModulePath=" && ' } else { '' }
+            cmd /c "$pre powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$bs`" <nul >nul 2>nul"
+            "CLEARED=$clear installed=$(Test-Path (Join-Path $env:LOCALAPPDATA 'rql\rql.exe'))"
           }
-          '--- curl with no progress bar, stdout NUL'
+          '--- installer error under the inherited PSModulePath'
           Remove-Item -Recurse -Force $state, (Join-Path $env:LOCALAPPDATA 'rql') -ErrorAction SilentlyContinue
-          cmd /c "powershell -NoProfile -NonInteractive -Command `"`$c = & curl.exe -fsSL -w '%{http_code}' -o x.bin https://downloads.repoql.ai/1.7.20/win-x64/rql.exe; 'code=' + `$c + ' exit=' + `$LASTEXITCODE | Out-File c1.txt`" <nul >nul 2>nul"
-          Get-Content c1.txt
-          cmd /c "powershell -NoProfile -NonInteractive -Command `"`$c = & curl.exe -fSL --progress-bar -w '%{http_code}' -o x.bin https://downloads.repoql.ai/1.7.20/win-x64/rql.exe; 'code=' + `$c + ' exit=' + `$LASTEXITCODE | Out-File c2.txt`" <nul >nul 2>nul"
-          Get-Content c2.txt
+          Set-Content inner.ps1 -Value @'
+          $ErrorActionPreference = 'SilentlyContinue'
+          $install = 'irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex'
+          $null | powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $install 2>&1 | Out-File -LiteralPath inner.log -Encoding utf8
+          "inner exit=$LASTEXITCODE" | Out-File -Append -LiteralPath inner.log
+          $null | powershell.exe -NoProfile -NonInteractive -Command 'Get-Module -ListAvailable Microsoft.PowerShell.Utility | % Path; try { Start-Sleep -Milliseconds 1; "sleep ok" } catch { "sleep: $_" }; try { Get-Command curl.exe -CommandType Application | Select-Object -First 1 | % Source } catch { "gc: $_" }' 2>&1 | Out-File -Append -LiteralPath inner.log
+          '@
+          cmd /c "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File inner.ps1 <nul >nul 2>nul"
+          Get-Content inner.log | Where-Object { $_ -notmatch '#' } | Select-Object -Last 40
 
   windows:
     runs-on: windows-latest
