@@ -145,19 +145,27 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          Get-Content (Join-Path $HOME '.local\state\repoql\bootstrap.log') -ErrorAction SilentlyContinue
-          $exe = Join-Path $env:LOCALAPPDATA 'rql\rql.exe'
-          Test-Path $exe
-          & $exe --version
+          'claude debug logs:'
+          Get-ChildItem (Join-Path $HOME '.claude\debug') -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1 | ForEach-Object { Get-Content $_.FullName | Select-String -Pattern 'repoql|MCP|mcp' | Select-Object -Last 60 }
+          curl.exe --version
+          $state = Join-Path $HOME '.local\state\repoql'
+          Remove-Item -Recurse -Force $state -ErrorAction SilentlyContinue
+          '--- launcher chain outside Claude Code'
           $init = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"diag","version":"0"}}}'
-          $p = Start-Process -FilePath $exe -ArgumentList 'mcp' -RedirectStandardInput (New-Item -Force init.json -Value ($init + "`n")).FullName -RedirectStandardOutput mcp.out -RedirectStandardError mcp.err -PassThru -NoNewWindow
-          if (-not $p.WaitForExit(60000)) { 'still running after 60s'; $p.Kill() }
-          'exit=' + $p.ExitCode
-          '--- stdout'; Get-Content mcp.out
-          '--- stderr'; Get-Content mcp.err
-          claude --debug mcp list 2>&1 | Select-Object -Last 80
-          Get-ChildItem -Recurse (Join-Path $HOME '.cache\claude-cli-nodejs') -Filter *.jsonl -ErrorAction SilentlyContinue | ForEach-Object { '== ' + $_.FullName; Get-Content $_.FullName -Tail 40 }
-          Get-ChildItem -Recurse (Join-Path $env:LOCALAPPDATA 'claude-cli-nodejs') -Filter *.jsonl -ErrorAction SilentlyContinue | ForEach-Object { '== ' + $_.FullName; Get-Content $_.FullName -Tail 40 }
+          Set-Content -Path init.json -Value $init
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          cmd /c "plugins\repoql\scripts\rql-mcp.cmd < init.json > mcp.out 2> mcp.err"
+          'exit=' + $LASTEXITCODE + ' after ' + $sw.Elapsed
+          '--- stdout'; Get-Content mcp.out -ErrorAction SilentlyContinue | Select-Object -First 5
+          '--- stderr'; Get-Content mcp.err -ErrorAction SilentlyContinue
+          '--- bootstrap.log'; Get-Content (Join-Path $state 'bootstrap.log') -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '#' }
+          Test-Path (Join-Path $env:LOCALAPPDATA 'rql\rql.exe')
+          Remove-Item -Recurse -Force $state -ErrorAction SilentlyContinue
+          '--- installer alone, piped as bootstrap-rql.ps1 does'
+          $install = '[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex'
+          $null | powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $install 2>&1 | Out-File inst.log -Encoding utf8
+          'exit=' + $LASTEXITCODE
+          Get-Content inst.log | Select-Object -Last 40
 
   windows:
     runs-on: windows-latest
