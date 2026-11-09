@@ -94,7 +94,9 @@ install() {
     if [ -n "$win_posix" ]; then
         # </dev/null keeps stdin redirected so the installer's non-interactive
         # detection holds and nothing can block on a prompt.
-        powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
+        # A PowerShell 7 parent leaves its own module directories in PSModulePath,
+        # and Windows PowerShell then dies mid-download; unset, it builds its own.
+        env -u PSModulePath powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
             "irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex" </dev/null >>"$log" 2>&1
         return
     fi

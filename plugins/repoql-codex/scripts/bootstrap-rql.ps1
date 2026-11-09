@@ -74,8 +74,18 @@ try {
     # A child process keeps the installer's output and exit away from this
     # hook, and the empty stdin keeps it from blocking on a prompt.
     $install = '[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex'
-    $null | powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $install 2>&1 |
-        Out-File -LiteralPath $log -Append -Encoding utf8
+    # An agent started from a PowerShell 7 terminal passes on PowerShell 7's
+    # module directories in PSModulePath. Windows PowerShell then loads
+    # PowerShell 7's modules, and the installer dies mid-download without an
+    # error. With the variable unset, the installer builds its own default.
+    $modulePath = $env:PSModulePath
+    $env:PSModulePath = $null
+    try {
+        $null | powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $install 2>&1 |
+            Out-File -LiteralPath $log -Append -Encoding utf8
+    } finally {
+        $env:PSModulePath = $modulePath
+    }
 } finally {
     Remove-Item -LiteralPath $lock
 }
