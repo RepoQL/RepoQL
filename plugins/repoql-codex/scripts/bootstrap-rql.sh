@@ -92,7 +92,9 @@ rql_available && exit 0
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] rql missing — installing from downloads.repoql.ai" >>"$log"
 if [ -n "$win_posix" ]; then
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
+    # A PowerShell 7 parent leaves its own module directories in PSModulePath,
+    # and Windows PowerShell then dies mid-download; unset, it builds its own.
+    env -u PSModulePath powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
         "irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex" </dev/null >>"$log" 2>&1
 else
     curl -fsSL --max-time 30 https://downloads.repoql.ai/latest/install-rql.sh | bash >>"$log" 2>&1
