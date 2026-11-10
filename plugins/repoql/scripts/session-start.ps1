@@ -85,6 +85,38 @@ try {
             $context += "`n## Accessible Uplinks`n(not checked $dash run rql uplinks to discover account access)`n"
         }
         $context += "`n## Concepts`nconcept:///** holds the concepts of this repository and its imports.`n"
+
+        # Sign-in: nothing else tells a plugin user that signing in exists, because the plugin installs rql without
+        # `rql install` and its browser setup. Say it once per machine, and only when rql reports no credential at
+        # all: a session that fails its live check (offline, say) is not a signed-out user. Signing in is the consent
+        # boundary for sending code and usage records to RepoQL, so this never signs in; it says what signing in does.
+        $stateDir = $env:REPOQL_STATE_DIR
+        if (-not $stateDir) { $stateDir = Join-Path $HOME '.local\state\repoql' }
+        $signinMarker = Join-Path $stateDir 'signin-notice'
+        if (-not (Test-Path -LiteralPath $signinMarker)) {
+            $whoamiText = (@($null | rql account whoami --json 2>$null) -join "`n")
+            $whoamiStatus = $LASTEXITCODE
+            $report = ConvertFrom-HookJson $whoamiText
+            $signinState = ''
+            if ($report -and $report.authenticated -eq $true) {
+                $signinState = 'signed-in'
+            } elseif ($report -and $whoamiStatus -eq 1 -and $report.authenticated -eq $false -and $report.material -and
+                      $report.material.sessionPresent -eq $false -and -not $report.material.apiKeyMasked -and
+                      $report.material.oidcEnvironmentAvailable -ne $true) {
+                $signinState = 'signed-out'
+            }
+            if ($signinState -eq 'signed-out') {
+                $signinNotice = 'RepoQL is running signed out: it indexes and searches on this machine, and explain, reranking and cloud embeddings are off. Sign in with `rql account login` to turn them on. Signing in sends the text RepoQL embeds or explains, and a usage record per tool call, to RepoQL (https://repoql.com/docs/your-data/), under the Customer Terms and Software Licence (https://repoql.com/terms/2026-09-11/). This note appears once.'
+                if ($notice) { $notice = "$notice $signinNotice" } else { $notice = $signinNotice }
+                $context += "`n## Account`nrql is signed out: explain, reranking and cloud embeddings are unavailable, and search uses local embeddings. If the user wants them, they sign in with ``rql account login``, which opens a browser. Signing in sends their code's text and usage records to RepoQL, so offer it and let them decide; never run it unasked.`n"
+            }
+            if ($signinState) {
+                try {
+                    New-Item -ItemType Directory -Force -Path $stateDir -ErrorAction Stop | Out-Null
+                    New-Item -ItemType File -Force -Path $signinMarker -ErrorAction Stop | Out-Null
+                } catch { }
+            }
+        }
     }
 
     # The host adds the line @.repoql/concepts/README.md to CLAUDE.md, and Claude Code

@@ -67,7 +67,7 @@ For the work you use it on: **research**, **findings**, **effective-markdown**, 
 
 ### Hooks
 
-- **SessionStart** — waits for the `rql` install if one is under way (see Installation; it starts one in a session where the MCP server was not spawned), then injects a deliberately small orientation: the mounted `github://` repos (directly usable), accessible uplink names, and a pointer to the `concept://` invariants. Repo structure and docs are large and re-derivable, so the agent pulls them on demand (`read` / `explore`) rather than paying for them every session.
+- **SessionStart** — waits for the `rql` install if one is under way (see Installation; it starts one in a session where the MCP server was not spawned), then injects a deliberately small orientation: the mounted `github://` repos (directly usable), accessible uplink names, and a pointer to the `concept://` invariants. Repo structure and docs are large and re-derivable, so the agent pulls them on demand (`read` / `explore`) rather than paying for them every session. Until it gets a definite answer, it also asks `rql account whoami` whether this machine is signed in. When `rql` holds no credential at all, it tells you once that RepoQL is running signed out, what signing in turns on and sends, and that `rql account login` does it; the agent may offer to run that, never unasked. It never signs you in. The answer is remembered in `~/.local/state/repoql/signin-notice` (under `REPOQL_STATE_DIR` when that is set); delete that file to be asked again.
 - **PreToolUse (Write/Edit)** — surfaces the `concept://` invariants relevant to the file being edited, once per session, as extra context just before the write.
 - **PostToolUse (reads)** — defines known terms and aliases from returned text after native `Read`/`read_file` and RepoQL MCP `read` calls. Each definition appears once per session in the serving host; a host restart resets that memory. Scope comes from the read target.
 - **PostToolUse (edits)** — records which git worktree the session edits, in the background, so an edit is never slowed or blocked.
@@ -90,7 +90,7 @@ Vocabulary hints require a host and CLI with `rql vocabulary hints` support. Eac
 
 - **The MCP launcher** (`scripts/rql-mcp`, or `scripts/rql-mcp.cmd` on Windows) runs `rql mcp` from `~/.local/bin` or `%LOCALAPPDATA%\rql`. When `rql` is missing it runs `scripts/bootstrap-rql.sh` (or `.ps1`), unless `REPOQL_NO_BOOTSTRAP=1` is set.
 - **The bootstrap** downloads the installer script from `https://downloads.repoql.ai/latest/install-rql.sh` (or `install-rql.ps1`) and runs it. The installer reads the current version from `https://downloads.repoql.ai/latest/version.txt` and downloads that version's `rql` binary from `https://downloads.repoql.ai/<version>/<platform>/`, over HTTPS. Its log is `~/.local/state/repoql/bootstrap.log`.
-- **The hooks** are shell scripts (PowerShell on Windows without Git Bash) that call the local `rql` binary and nothing else. They make no network request.
+- **The hooks** are shell scripts (PowerShell on Windows without Git Bash) that call the local `rql` binary and nothing else. The session-start hook runs `rql uplinks` and, until it has an answer, `rql account whoami`. When you are signed in, `rql` answers those by contacting RepoQL's account service.
 - **The host display** reads the output of the local `rql monitor` command. It makes no network request.
 
 ### What leaves your machine

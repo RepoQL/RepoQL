@@ -122,6 +122,36 @@ else
         ctx+=$'\n'"## Accessible Uplinks"$'\n'"(not checked — run rql uplinks to discover account access)"$'\n'
     fi
     ctx+=$'\n'"## Concepts"$'\n'"concept:///** holds the concepts of this repository and its imports."$'\n'
+
+    # Sign-in: nothing else tells a plugin user that signing in exists, because the plugin installs rql without
+    # `rql install` and its browser setup. Say it once per machine, and only when rql reports no credential at all:
+    # a session that fails its live check (offline, say) is not a signed-out user. Signing in is the consent
+    # boundary for sending code and usage records to RepoQL, so this never signs in; it says what signing in does.
+    signin_marker="${REPOQL_STATE_DIR:-$HOME/.local/state/repoql}/signin-notice"
+    if [ ! -e "$signin_marker" ]; then
+        # whoami exits 1 when signed out; inside a list, that status does not fire the ERR trap.
+        whoami_status=0
+        whoami_out=$(rql account whoami --json </dev/null 2>/dev/null) || whoami_status=$?
+        whoami_leaves=$(printf '%s' "$whoami_out" | json_leaves '^(authenticated|material[.](sessionPresent|apiKeyMasked|oidcEnvironmentAvailable))$' 2>/dev/null)
+        signin_state=""
+        if printf '%s\n' "$whoami_leaves" | grep -qx $'authenticated\ttrue'; then
+            signin_state=signed-in
+        elif [ "$whoami_status" = "1" ] \
+            && printf '%s\n' "$whoami_leaves" | grep -qx $'authenticated\tfalse' \
+            && printf '%s\n' "$whoami_leaves" | grep -qx $'material.sessionPresent\tfalse' \
+            && ! printf '%s\n' "$whoami_leaves" | grep -q '^material[.]apiKeyMasked' \
+            && ! printf '%s\n' "$whoami_leaves" | grep -qx $'material.oidcEnvironmentAvailable\ttrue'; then
+            signin_state=signed-out
+        fi
+        if [ "$signin_state" = "signed-out" ]; then
+            signin_notice="RepoQL is running signed out: it indexes and searches on this machine, and explain, reranking and cloud embeddings are off. Sign in with \`rql account login\` to turn them on. Signing in sends the text RepoQL embeds or explains, and a usage record per tool call, to RepoQL (https://repoql.com/docs/your-data/), under the Customer Terms and Software Licence (https://repoql.com/terms/2026-09-11/). This note appears once."
+            notice="${notice:+$notice }$signin_notice"
+            ctx+=$'\n'"## Account"$'\n'"rql is signed out: explain, reranking and cloud embeddings are unavailable, and search uses local embeddings. If the user wants them, they sign in with \`rql account login\`, which opens a browser. Signing in sends their code's text and usage records to RepoQL, so offer it and let them decide; never run it unasked."$'\n'
+        fi
+        if [ -n "$signin_state" ]; then
+            { mkdir -p "${signin_marker%/*}" && : >"$signin_marker"; } 2>/dev/null || true
+        fi
+    fi
 fi
 
 # The host adds the line @.repoql/concepts/README.md to CLAUDE.md, and Claude Code
