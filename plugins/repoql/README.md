@@ -90,7 +90,7 @@ Vocabulary hints require a host and CLI with `rql vocabulary hints` support. Eac
 
 - **The MCP launcher** (`scripts/rql-mcp`, or `scripts/rql-mcp.cmd` on Windows) runs `rql mcp` from `~/.local/bin` or `%LOCALAPPDATA%\rql`. When `rql` is missing it runs `scripts/bootstrap-rql.sh` (or `.ps1`), unless `REPOQL_NO_BOOTSTRAP=1` is set.
 - **The bootstrap** downloads the installer script from `https://downloads.repoql.ai/latest/install-rql.sh` (or `install-rql.ps1`) and runs it. The installer reads the current version from `https://downloads.repoql.ai/latest/version.txt` and downloads that version's `rql` binary from `https://downloads.repoql.ai/<version>/<platform>/`, over HTTPS. Its log is `~/.local/state/repoql/bootstrap.log`.
-- **The hooks** are shell scripts (PowerShell on Windows without Git Bash) that call the local `rql` binary and nothing else. They make no network request.
+- **The hooks** are shell scripts (PowerShell on Windows without Git Bash) that call the local `rql` binary and nothing else. The session-start hook runs `rql uplinks` to list the uplinks your account can reach; when you are signed in, `rql` answers that by contacting RepoQL's account service.
 - **The host display** reads the output of the local `rql monitor` command. It makes no network request.
 
 ### What leaves your machine
